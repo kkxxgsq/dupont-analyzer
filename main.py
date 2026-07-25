@@ -71,6 +71,52 @@ async def api_compare(codes: str = Query(description="Comma separated: JD,BABA,A
             out.append(result_to_dict(r))
     return JSONResponse(content=json.loads(json.dumps({"results": out}, default=str)))
 
+@app.get("/api/valuation")
+async def api_valuation(code: str = Query(), market: str = Query(default=None)):
+    """获取实时估值指标：PE, PB, PS, PCF, 市值"""
+    m = market or detect_market(code)
+    import akshare as ak
+    import pandas as pd
+    loop = asyncio.get_event_loop()
+    clean = code.upper().replace('.HK','').replace('.SH','').replace('.SZ','').replace('.BJ','')
+    result = {"pe": None, "pb": None, "ps": None, "pcf": None, "market_cap": None}
+    try:
+        if m == 'a':
+            df = await loop.run_in_executor(executor, ak.stock_zh_a_spot_tx)
+            if df is not None and not df.empty:
+                mv = df[df['code'].astype(str).str.contains(clean, na=False)]
+                if not mv.empty:
+                    r = mv.iloc[0]
+                    r = mv.iloc[0]
+                    def to_float(v):
+                        try: return float(v)
+                        except: return None
+                    result = {
+                        "pe": to_float(r.get('pe_ttm')),
+                        "pb": to_float(r.get('pn')),
+                        "ps": None, "pcf": None,
+                        "market_cap": to_float(r.get('zsz')) * 1e8 if to_float(r.get('zsz')) else None,
+                    }
+        elif m in ('hk', 'us'):
+            fn = ak.stock_hk_spot_em if m == 'hk' else ak.stock_us_spot_em
+            df = await loop.run_in_executor(executor, fn)
+            if df is not None and not df.empty:
+                col_code = "港股代码" if m == 'hk' else "代码"
+                col_pe = "市盈率" if m == 'hk' else "市盈率-动态"
+                col_pb = "市净率"
+                mv = df[df[col_code].astype(str).str.contains(clean, na=False)]
+                if not mv.empty:
+                    r = mv.iloc[0]
+                    result = {
+                        "pe": float(r.get(col_pe, 0)) if pd.notna(r.get(col_pe, None)) else None,
+                        "pb": float(r.get(col_pb, 0)) if pd.notna(r.get(col_pb, None)) else None,
+                        "ps": None, "pcf": None,
+                        "market_cap": None,
+                    }
+    except Exception:
+        pass
+    return result
+
 # ── frontend ────────────────────────────────────────────────────
 HTML = r"""<!DOCTYPE html>
 <html lang="zh-CN">
@@ -578,6 +624,7 @@ function loadPeg(code, market) {
           <strong>原理：</strong>${m.reason}
         </div>
         <div style="display:flex;gap:6px;align-items:center">
+          <button onclick="fetchValuation(event,'${code}','${s.market}')" title="从网络获取实时数据" style="background:#10b981;color:#fff;border:none;border-radius:6px;padding:7px 10px;font-size:11px;font-weight:600;cursor:pointer;white-space:nowrap">获取</button>
           <input id="pegVal-${code}-${m.key}" type="number" step="0.01" placeholder="输入 ${m.label.split('(')[0]}" style="flex:1;padding:7px 10px;border:1px solid #d1d9e6;border-radius:6px;font-size:13px;outline:none" onkeydown="if(event.key==='Enter')calcMetric('${code}','${m.key}')">
           <button onclick="calcMetric('${code}','${m.key}')" style="background:#4a6cf7;color:#fff;border:none;border-radius:6px;padding:7px 14px;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap">计算</button>
         </div>
@@ -744,6 +791,38 @@ function calcCagr(vals, yearsBack) {
   const end = ps[ps.length - 1].np;
   if (start <= 0 || end <= 0) return null;
   return (Math.pow(end / start, 1.0 / yearsBack) - 1) * 100;
+}
+
+async function fetchValuation(ev, code, market) {
+  const btn = ev.target;
+  const orig = btn.textContent;
+  btn.textContent = '...';
+  btn.disabled = true;
+  try {
+    const resp = await fetch(`/api/valuation?code=${encodeURIComponent(code)}&market=${encodeURIComponent(market)}`);
+    if (!resp.ok) throw new Error('err');
+    const data = await resp.json();
+    const keyMap = {pe_ttm:'pe', pb:'pb', ps:'ps', pcf:'pcf'};
+    let filled = 0;
+    for (const [mKey, apiKey] of Object.entries(keyMap)) {
+      const inp = document.getElementById(`pegVal-${code}-${mKey}`);
+      if (inp && data[apiKey] !== null && data[apiKey] !== undefined) {
+        inp.value = data[apiKey].toFixed(2);
+        filled++;
+      }
+    }
+    if (filled > 0) {
+      btn.textContent = '✅ ' + filled;
+      btn.style.background = '#059669';
+    } else {
+      btn.textContent = '⚠️ 无数据';
+      btn.style.background = '#f59e0b';
+    }
+  } catch(e) {
+    btn.textContent = '⚠️ 失败';
+    btn.style.background = '#ef4444';
+  }
+  setTimeout(() => { btn.textContent = '获取'; btn.disabled = false; btn.style.background = '#10b981'; }, 2500);
 }
 
 function renderPegButton(code, market) {
