@@ -1,4 +1,4 @@
-# 杜邦分析 v4.5 — VPS 部署指南
+# 杜邦分析 v7.1 — VPS 部署指南
 
 ## 前置要求
 
@@ -7,20 +7,25 @@
 
 ## 快速部署
 
+### 方案一：使用 `versions/v7.1/` 部署包（推荐）
+
+VPS 上拉取最新代码后部署：
+
 ```bash
-# 1. 上传项目到 VPS
+git clone https://github.com/kkxxgsq/dupont-analyzer.git
+cd dupont-analyzer/versions/v7.1
+./deploy.sh rebuild
+```
+
+### 方案二：从本地 rsync 到 VPS
+
+```bash
 rsync -avz --exclude 'cache/' --exclude 'versions/' --exclude '__pycache__/' \
   . user@your-vps:/opt/dupont-analyzer/
 
-# 2. SSH 到 VPS 后
+ssh user@your-vps
 cd /opt/dupont-analyzer
-chmod +x deploy.sh
-
-# 3. 构建并启动
 ./deploy.sh rebuild
-
-# 4. 查看日志
-./deploy.sh logs
 ```
 
 ## 常用命令
@@ -30,7 +35,7 @@ chmod +x deploy.sh
 | `docker compose up -d` | 启动服务（后台） |
 | `docker compose down` | 停止服务 |
 | `docker compose logs -f` | 查看实时日志 |
-| `docker compose build --no-cache` | 重新构建镜像 |
+| `docker compose build` | 重新构建镜像 |
 | `./deploy.sh rebuild` | 重建并启动 |
 
 ## 数据持久化
@@ -64,3 +69,13 @@ server {
 - 数据来自东方财富（通过 akshare 接口）
 - A 股首次加载需 1-3 分钟（数据量大），后续走缓存
 - 缓存默认存在 24 小时，可通过 `http://your-vps:8765/api/cache-clear` 清除
+
+## 更新升级
+
+```bash
+cd /opt/dupont-analyzer
+git pull                          # 拉取最新代码
+docker compose down               # 停旧容器
+docker compose build              # 重新构建
+docker compose up -d              # 启动新版
+```
