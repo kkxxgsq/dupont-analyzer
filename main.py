@@ -457,7 +457,7 @@ function _buildStockCard(s) {
   const by = d.best_year;
   const wy = d.worst_year;
 
-  let html = `<div id="${s.cardId}" class="card"><div class="card-header">📊 ${d.company.name} <span style="font-weight:400;font-size:13px;color:#8899b0">(${d.company.code}) — 杜邦分析</span>`;
+  let html = `<div class="card"><div class="card-header">📊 ${d.company.name} <span style="font-weight:400;font-size:13px;color:#8899b0">(${d.company.code}) — 杜邦分析</span>`;
   html += `<button onclick="_refreshStock('${s.code}','${s.market}')" style="float:right;background:#f0f2f5;border:1px solid #e2e8f0;border-radius:6px;padding:4px 10px;font-size:12px;cursor:pointer;color:#4a5568" title="刷新该股票数据">🔄</button>`;
   html += `</div>`;
 
