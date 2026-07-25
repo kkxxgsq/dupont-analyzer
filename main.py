@@ -451,7 +451,7 @@ function _syncCompareTabs() {
     const compareDiv = document.createElement('div');
     compareDiv.className = 'tab-content';
     compareDiv.dataset.content = `compare-${s.cardId}`;
-    compareDiv.innerHTML = `<div class="card-body">${renderCompareTable(ready)}<div class="chart-grid"><div class="chart-box"><canvas id="chartCompRoe-${s.cardId}"></canvas></div><div class="chart-box"><canvas id="chartCompNpm-${s.cardId}"></canvas></div></div></div>`;
+    compareDiv.innerHTML = `<div class="card-body">${renderCompareTable(ready)}<div class="chart-grid" style="display:grid;grid-template-columns:1fr 1fr;gap:12px"><div class="chart-box"><canvas id="chartCompRoe-${s.cardId}"></canvas></div><div class="chart-box"><canvas id="chartCompNpm-${s.cardId}"></canvas></div><div class="chart-box"><canvas id="chartCompAt-${s.cardId}"></canvas></div><div class="chart-box"><canvas id="chartCompEm-${s.cardId}"></canvas></div></div></div>`;
     lastContent.parentNode.insertBefore(compareDiv, lastContent.nextSibling);
   }
 }
@@ -567,9 +567,11 @@ function _buildStockCard(s) {
   if (rdy.length > 1) {
     html += `<div class="tab-content" data-content="compare-${s.cardId}"><div class="card-body">`;
     html += renderCompareTable(rdy);
-    html += `<div class="chart-grid">`;
+    html += `<div class="chart-grid" style="display:grid;grid-template-columns:1fr 1fr;gap:12px">`;
     html += `<div class="chart-box"><canvas id="chartCompRoe-${s.cardId}"></canvas></div>`;
     html += `<div class="chart-box"><canvas id="chartCompNpm-${s.cardId}"></canvas></div>`;
+    html += `<div class="chart-box"><canvas id="chartCompAt-${s.cardId}"></canvas></div>`;
+    html += `<div class="chart-box"><canvas id="chartCompEm-${s.cardId}"></canvas></div>`;
     html += `</div></div></div>`;
   }
 
@@ -660,19 +662,23 @@ function _drawCompareCharts(s) {
   const yearSets = ready.map(s => new Set(s.data.years.map(y=>y.year)));
   const common = [...yearSets[0]].filter(y => yearSets.every(ys => ys.has(y))).sort();
   const cid = s.cardId;
-
-  ['chartCompRoe','chartCompNpm'].forEach((base, i) => {
-    const ctx = document.getElementById(base+'-'+cid);
-    if (!ctx) return;
-    destroyChart(base+'-'+cid);
+  const chartKeys = [
+    {base:'chartCompRoe', key:'roe', label:'ROE', suffix:'%'},
+    {base:'chartCompNpm', key:'npm', label:'净利率', suffix:'%'},
+    {base:'chartCompAt', key:'at', label:'周转率', suffix:''},
+    {base:'chartCompEm', key:'em', label:'杠杆', suffix:''},
+  ];
+  for (const ck of chartKeys) {
+    const ctx = document.getElementById(ck.base+'-'+cid);
+    if (!ctx) continue;
+    destroyChart(ck.base+'-'+cid);
     const datasets = ready.map((ss, j) => {
-      const vals = common.map(y => { const yr = ss.data.years.find(vy => vy.year===y); if (!yr) return null; return i===0 ? yr.roe : yr.npm; });
+      const vals = common.map(y => { const yr = ss.data.years.find(vy => vy.year===y); if (!yr) return null; return yr[ck.key]; });
       return {label: ss.data.company.name, data: vals, borderColor: colors[j%colors.length], backgroundColor: colors[j%colors.length]+'20', fill: false, tension: .3, pointRadius: 3, borderWidth: 2, spanGaps: true};
     });
-    const labels = ['ROE','净利率'];
-    chartInstances[base+'-'+cid] = new Chart(ctx, {type:'line', data:{labels:common, datasets},
-      options:{responsive:true,maintainAspectRatio:false,plugins:{title:{display:true,text:labels[i],font:{size:13}}},scales:{y:{beginAtZero:true,ticks:{callback:v=>v+(i===0?'%':'%')}}}}});
-  });
+    chartInstances[ck.base+'-'+cid] = new Chart(ctx, {type:'line', data:{labels:common, datasets},
+      options:{responsive:true,maintainAspectRatio:false,plugins:{title:{display:true,text:ck.label+'对比',font:{size:13}}},scales:{y:{beginAtZero:true,ticks:{callback:v=>v+ck.suffix}}}}});
+  }
 }
 
 function switchTab2(el, group) {
@@ -1085,45 +1091,23 @@ function _toggleCompareBtn() {
 function _renderCompareChartsOffscreen() {
   const ready = stocks.filter(s => s.data);
   if (ready.length < 2) return null;
-  const wrap = document.createElement('div');
-  wrap.style.cssText = 'position:fixed;left:-9999px;top:0;z-index:-1';
-  document.body.appendChild(wrap);
-  const colors = ['#4a6cf7','#10b981','#f59e0b','#ef4444','#8b5cf6','#ec4899'];
-  const yearSets = ready.map(s => new Set(s.data.years.map(y=>y.year)));
-  const common = [...yearSets[0]].filter(y => yearSets.every(ys => ys.has(y))).sort();
-  const chartKeys = [
-    {id:'_tmpRoe', key:'roe', label:'ROE', suffix:'%'},
-    {id:'_tmpNpm', key:'npm', label:'净利率', suffix:'%'},
-    {id:'_tmpAt', key:'at', label:'周转率', suffix:''},
-    {id:'_tmpEm', key:'em', label:'杠杆', suffix:''},
-  ];
+  const s = stocks.find(s => s.data && s.cardId && document.getElementById(`chartCompRoe-${s.cardId}`));
+  if (!s) return null;
+  const cid = s.cardId;
+  const content = document.querySelector(`[data-content="compare-${cid}"]`);
+  if (!content) return null;
+  content.style.display = 'block'; content.style.position = 'fixed';
+  content.style.left = '-9999px'; content.style.top = '0';
+  content.style.width = '800px'; content.style.zIndex = '-1';
+  _drawCompareCharts(s);
   const urls = {};
-  for (const k of chartKeys) {
-    const canvas = document.createElement('canvas');
-    canvas.id = k.id; canvas.width = 380; canvas.height = 200;
-    wrap.appendChild(canvas);
-    const ctx2d = canvas.getContext('2d');
-    ctx2d.fillStyle = '#fff'; ctx2d.fillRect(0, 0, 380, 200);
-    const datasets = ready.map((ss, j) => ({
-      label: ss.data.company.name,
-      data: common.map(y => { const yr = ss.data.years.find(vy => vy.year === y); return yr ? yr[k.key] : null; }),
-      borderColor: colors[j % colors.length],
-      backgroundColor: colors[j % colors.length] + '20',
-      fill: false, tension: .3, pointRadius: 3, borderWidth: 2, spanGaps: true,
-    }));
-    const chart = new Chart(canvas, {
-      type: 'line',
-      data: { labels: common, datasets },
-      options: {
-        responsive: false,
-        plugins: { title: { display: true, text: k.label + '对比', font: { size: 13, weight: 'bold' } }, legend: { labels: { font: { size: 11 } } } },
-        scales: { y: { beginAtZero: true, ticks: { callback: v => v + k.suffix } } },
-      },
-    });
-    urls[k.key] = canvas.toDataURL('image/png');
-    chart.destroy();
-  }
-  document.body.removeChild(wrap);
+  ['chartCompRoe','chartCompNpm','chartCompAt','chartCompEm'].forEach(base => {
+    const canvas = document.getElementById(`${base}-${cid}`);
+    if (canvas) urls[base.replace('chartComp','').toLowerCase()] = canvas.toDataURL('image/png');
+  });
+  content.style.display = ''; content.style.position = '';
+  content.style.left = ''; content.style.top = '';
+  content.style.width = ''; content.style.zIndex = '';
   return urls;
 }
 
