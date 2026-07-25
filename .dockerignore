@@ -1,10 +1,7 @@
 __pycache__
 *.pyc
-.git
-.env
-.env.*
-versions/
 cache/
-deploy.sh
-DEPLOY.md
-.DS_Store
+versions/
+.git
+.gitignore
+*.md
