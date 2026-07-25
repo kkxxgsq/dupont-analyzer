@@ -10,7 +10,7 @@ import uvicorn
 
 from analyzer import fetch, detect_market, search_stocks, result_to_dict, CACHE_DIR
 
-app = FastAPI(title="杜邦分析 v4.5")
+app = FastAPI(title="杜邦分析 v5.0")
 executor = ThreadPoolExecutor(max_workers=4)
 
 @app.get("/api/cache-clear")
@@ -73,46 +73,32 @@ async def api_compare(codes: str = Query(description="Comma separated: JD,BABA,A
 
 @app.get("/api/valuation")
 async def api_valuation(code: str = Query(), market: str = Query(default=None)):
-    """获取实时估值指标：PE, PB, PS, PCF, 市值"""
+    """获取实时估值指标：PE, PB, PS, PCF, 市值（腾讯行情，支持A/HK/US）"""
+    import urllib.request
     m = market or detect_market(code)
-    import akshare as ak
-    import pandas as pd
-    loop = asyncio.get_event_loop()
     clean = code.upper().replace('.HK','').replace('.SH','').replace('.SZ','').replace('.BJ','')
     result = {"pe": None, "pb": None, "ps": None, "pcf": None, "market_cap": None}
     try:
-        if m == 'a':
-            df = await loop.run_in_executor(executor, ak.stock_zh_a_spot_tx)
-            if df is not None and not df.empty:
-                mv = df[df['code'].astype(str).str.contains(clean, na=False)]
-                if not mv.empty:
-                    r = mv.iloc[0]
-                    r = mv.iloc[0]
-                    def to_float(v):
-                        try: return float(v)
-                        except: return None
-                    result = {
-                        "pe": to_float(r.get('pe_ttm')),
-                        "pb": to_float(r.get('pn')),
-                        "ps": None, "pcf": None,
-                        "market_cap": to_float(r.get('zsz')) * 1e8 if to_float(r.get('zsz')) else None,
-                    }
-        elif m in ('hk', 'us'):
-            fn = ak.stock_hk_spot_em if m == 'hk' else ak.stock_us_spot_em
-            df = await loop.run_in_executor(executor, fn)
-            if df is not None and not df.empty:
-                col_code = "港股代码" if m == 'hk' else "代码"
-                col_pe = "市盈率" if m == 'hk' else "市盈率-动态"
-                col_pb = "市净率"
-                mv = df[df[col_code].astype(str).str.contains(clean, na=False)]
-                if not mv.empty:
-                    r = mv.iloc[0]
-                    result = {
-                        "pe": float(r.get(col_pe, 0)) if pd.notna(r.get(col_pe, None)) else None,
-                        "pb": float(r.get(col_pb, 0)) if pd.notna(r.get(col_pb, None)) else None,
-                        "ps": None, "pcf": None,
-                        "market_cap": None,
-                    }
+        prefix = f'hk{clean}' if m == 'hk' else f'us{clean}' if m == 'us' else f'sh{clean}' if clean.startswith('6') else f'sz{clean}'
+        url = f'http://qt.gtimg.cn/q={prefix}'
+        resp = urllib.request.urlopen(url, timeout=8)
+        raw = resp.read().decode('gbk')
+        parts = raw.split('=')[-1].strip().strip('"').split('~')
+        if len(parts) > 45:
+            def f(v):
+                try: return float(v)
+                except: return None
+            pe = f(parts[39]) if len(parts) > 39 else None
+            mc = f(parts[44]) if len(parts) > 44 else None
+            if m == 'us':
+                pb = f(parts[41]) if len(parts) > 41 else None
+            elif m == 'hk':
+                pb = f(parts[72]) if len(parts) > 72 else None
+            else:
+                pb = f(parts[46]) if len(parts) > 46 else None
+            if m == 'us' and mc: mc = mc * 1e8
+            elif m in ('a', 'hk') and mc: mc = mc * 1e8
+            result = {"pe": pe, "pb": pb, "ps": None, "pcf": None, "market_cap": mc}
     except Exception:
         pass
     return result
@@ -213,7 +199,7 @@ tr:hover td{background:#f8fafc}
 <body>
 
 <div class="header">
-  <h1>杜邦分析 <span style="font-size:11px;color:#8899b0;font-weight:400">v4.5</span></h1>
+  <h1>杜邦分析 <span style="font-size:11px;color:#8899b0;font-weight:400">v5.0</span></h1>
   <p>基于公开财报数据的杜邦分解（支持美股/港股/A股）</p>
 </div>
 
@@ -308,12 +294,14 @@ async function addStock(code) {
         }
       }
     } catch(e) {}
-    return showErrorMsg(`未找到"${val}"，请尝试股票代码如 03690.HK（美团）、NVO（诺和诺德）`);
+    return alert(`未找到"${val}"，请尝试股票代码如 03690.HK（美团）、NVO（诺和诺德）`);
   }
 
   if (stocks.some(s => s.code.toUpperCase() === val.toUpperCase())) {
-    const idx = stocks.findIndex(s => s.code.toUpperCase() === val.toUpperCase());
-    if (idx !== -1) selectStock(idx);
+    const existing = stocks.find(s => s.code.toUpperCase() === val.toUpperCase());
+    if (existing?.cardId) {
+      document.getElementById(existing.cardId)?.scrollIntoView({behavior:'smooth',block:'start'});
+    }
     return;
   }
   addStockWithInfo(val, detectMarket(val), val);
@@ -321,9 +309,10 @@ async function addStock(code) {
 
 function addStockWithInfo(code, market, name) {
   const idx = stocks.length;
-  stocks.push({code, market, name, loading: true, error: false, errorMsg: ''});
+  const cardId = `sc-${code}-${Date.now()}`;
+  stocks.push({code, market, name, loading: true, error: false, errorMsg: '', cardId});
   renderTags();
-  showLoadingMsg(name);
+  _showLoadingCard(cardId, name);
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 90000);
@@ -336,28 +325,25 @@ function addStockWithInfo(code, market, name) {
     })
     .then(data => {
       clearTimeout(timeout);
-      stocks[idx] = {code, market, name: data.company.name, loading: false, error: false, errorMsg: '', data};
+      stocks[idx] = {...stocks[idx], name: data.company.name, loading: false, error: false, errorMsg: '', data};
       renderTags();
-      renderMain();
+      _appendStockCard(stocks[idx]);
     })
     .catch(e => {
       clearTimeout(timeout);
       const msg = e.name === 'AbortError' ? '请求超时，请检查网络或稍后重试' : e.message;
-      stocks[idx] = {code, market, name, loading: false, error: true, errorMsg: msg};
+      stocks[idx] = {...stocks[idx], loading: false, error: true, errorMsg: msg};
       renderTags();
-      renderMain();
+      _showErrorCard(cardId, code, name, msg);
     });
 }
 
 function removeStock(idx) {
+  const card = document.getElementById(stocks[idx]?.cardId);
+  if (card) card.remove();
   stocks.splice(idx, 1);
   renderTags();
-  if (stocks.length === 0) {
-    if (loadingTimer) clearInterval(loadingTimer);
-    mainContent.innerHTML = EMPTY_HTML;
-  } else {
-    renderMain();
-  }
+  if (stocks.length === 0) mainContent.innerHTML = EMPTY_HTML;
 }
 
 const EMPTY_HTML = `<div class="card"><div class="card-body" style="text-align:center;padding:60px 20px;color:#8899b0">
@@ -381,78 +367,240 @@ async function quickCompare(btn) {
       await addStock(c);
     }
   }
-  const tab = document.querySelector('.tab-item[data-tab="compare"]');
-  if (tab) switchTab(tab);
 }
 
 function renderTags() {
   stockTags.innerHTML = stocks.map((s, i) => {
-    const isActive = i === activeIdx;
-    const bg = s.error ? '#fef2f2' : (isActive ? '#dbe4ff' : '#e8edfd');
-    const border = isActive ? '2px solid #4a6cf7' : '2px solid transparent';
+    const bg = s.error ? '#fef2f2' : '#e8edfd';
     if (s.error && s.errorMsg) {
-      return `<span class="stock-tag" data-idx="${i}" onclick="selectStock(${i})" title="${s.errorMsg}" style="background:${bg};color:#dc2626;border:${border};cursor:pointer">⚠️ ${s.name} <span class="del" onclick="event.stopPropagation();removeStock(${i})">×</span></span>`;
+      return `<span class="stock-tag" title="${s.errorMsg}" style="background:${bg};color:#dc2626;cursor:default">⚠️ ${s.name} <span class="del" onclick="event.stopPropagation();removeStock(${i})">×</span></span>`;
     }
-    return `<span class="stock-tag" data-idx="${i}" onclick="selectStock(${i})" style="background:${bg};border:${border};cursor:pointer">${s.loading ? '⏳' : ''} ${s.name} <span class="del" onclick="event.stopPropagation();removeStock(${i})">×</span></span>`;
+    return `<span class="stock-tag" onclick="document.getElementById('${s.cardId}')?.scrollIntoView({behavior:'smooth',block:'start'});renderTags();" style="background:${bg};cursor:pointer">${s.loading ? '⏳' : ''} ${s.name} <span class="del" onclick="event.stopPropagation();removeStock(${i})">×</span></span>`;
   }).join('');
 }
 
-let activeIdx = -1;
+function _appendStockCard(s) {
+  const existing = document.getElementById(s.cardId);
+  if (existing) existing.remove();
+  const html = _buildStockCard(s);
+  if (mainContent.querySelector('.empty-placeholder')) mainContent.innerHTML = '';
+  mainContent.insertAdjacentHTML('beforeend', html);
+}
 
-function selectStock(idx) {
-  activeIdx = idx;
-  renderTags();
-  const s = stocks[idx];
-  if (s.data && !s.error && !s.loading) {
-    renderSingle(s);
-  } else if (s.error) {
-    showErrorMsg(s.errorMsg);
-  } else {
-    showLoadingMsg(s.name);
+function _showLoadingCard(cardId, name) {
+  const existing = document.getElementById(cardId);
+  if (existing) existing.remove();
+  const html = `<div id="${cardId}" class="card"><div class="card-body"><div class="loading"><div class="spinner"></div><p style="margin-top:12px;font-size:15px;font-weight:500">正在获取 ${name} 的财务数据…</p><p style="margin-top:6px;font-size:13px;color:#8899b0">首次加载可能需 1-3 分钟（A股较慢），数据会缓存到本地</p></div></div></div>`;
+  if (mainContent.querySelector('.empty-placeholder')) mainContent.innerHTML = '';
+  mainContent.insertAdjacentHTML('beforeend', html);
+}
+
+function _showErrorCard(cardId, code, name, msg) {
+  const existing = document.getElementById(cardId);
+  if (existing) existing.remove();
+  const html = `<div id="${cardId}" class="card"><div class="card-body"><div class="error-box">⚠️ [${code}] ${name} — ${msg}</div></div></div>`;
+  mainContent.insertAdjacentHTML('beforeend', html);
+}
+
+function _buildStockCard(s) {
+  const d = s.data;
+  const y = d.years;
+  const by = d.best_year;
+  const wy = d.worst_year;
+
+  let html = `<div id="${s.cardId}" class="card"><div class="card-header">📊 ${d.company.name} <span style="font-weight:400;font-size:13px;color:#8899b0">(${d.company.code}) — 杜邦分析</span>`;
+  html += `<button onclick="_refreshStock('${s.code}','${s.market}')" style="float:right;background:#f0f2f5;border:1px solid #e2e8f0;border-radius:6px;padding:4px 10px;font-size:12px;cursor:pointer;color:#4a5568" title="刷新该股票数据">🔄</button>`;
+  html += `</div>`;
+
+  html += `<div style="clear:both"></div>`;
+
+  // Tab bar
+  html += `<div class="tab-bar">`;
+  html += `<div class="tab-item active" data-tab="dupont-${s.cardId}" onclick="switchTab2(this,'dupont-${s.cardId}')">杜邦分解</div>`;
+  if (by && wy) html += `<div class="tab-item" data-tab="years-${s.cardId}" onclick="switchTab2(this,'years-${s.cardId}')">最优/最差年份</div>`;
+  html += `<div class="tab-item" data-tab="chart-${s.cardId}" onclick="switchTab2(this,'chart-${s.cardId}')">趋势图</div>`;
+  const ready = stocks.filter(ss => ss.data);
+  if (ready.length > 1) html += `<div class="tab-item" data-tab="compare-${s.cardId}" onclick="switchTab2(this,'compare-${s.cardId}')">对比</div>`;
+  html += `</div>`;
+
+  // Tab content: dupont
+  html += `<div class="tab-content active" data-content="dupont-${s.cardId}"><div class="card-body">`;
+  html += renderProfile(d.profile);
+  const markings = {best: by ? by.year : null, worst: wy ? wy.year : null};
+  const cautionYears = (d.cautions || []).map(c => c.year);
+  html += `<div style="display:flex;gap:12px;font-size:12px;color:#4a5568;margin-bottom:8px">
+    <span>🏆 最优年份</span><span>⚠️ 最差年份</span><span>🔔 警惕年份</span>
+  </div>`;
+  html += dupontTable(y, markings, cautionYears);
+  html += renderAnalysis(d);
+  html += renderPegButton(s.code, s.market);
+  html += `<div id="pegBox-${s.code}" style="margin-top:12px"></div>`;
+  html += `</div></div>`;
+
+  // Tab content: best/worst years
+  if (by && wy) {
+    html += `<div class="tab-content" data-content="years-${s.cardId}"><div class="card-body"><div class="year-compare">`;
+    html += `<div class="year-card best"><h3>🏆 最优年份</h3><div class="val text-green">${by.year}年</div><div style="font-size:32px;font-weight:700;color:#10b981;margin:6px 0">ROE ${by.roe}%</div><div class="items"><div class="item"><div class="l">净利率</div><div class="v">${by.npm}%</div></div><div class="item"><div class="l">资产周转率</div><div class="v">${by.at}</div></div><div class="item"><div class="l">权益乘数</div><div class="v">${by.em}</div></div></div></div>`;
+    html += `<div class="year-card worst"><h3>⚠️ 最差年份</h3><div class="val text-red">${wy.year}年</div><div style="font-size:32px;font-weight:700;color:#ef4444;margin:6px 0">ROE ${wy.roe}%</div><div class="items"><div class="item"><div class="l">净利率</div><div class="v">${wy.npm}%</div></div><div class="item"><div class="l">资产周转率</div><div class="v">${wy.at}</div></div><div class="item"><div class="l">权益乘数</div><div class="v">${wy.em}</div></div></div></div>`;
+    html += `</div>`;
+    const gapNpm = (by.npm - wy.npm).toFixed(2);
+    const gapAt = (by.at - wy.at).toFixed(4);
+    const gapEm = (by.em - wy.em).toFixed(4);
+    html += `<div style="margin-top:20px;padding:16px;background:#f8fafc;border-radius:8px;font-size:13px;line-height:1.8">`;
+    html += `<strong>差距分析：</strong>最优年份(${by.year}) vs 最差年份(${wy.year})<br>`;
+    html += `净利率差距 ${gapNpm}pct，周转率差距 ${gapAt}，权益乘数差距 ${gapEm}<br>`;
+    const npmEffect = ((by.npm-wy.npm)/100 * wy.at * wy.em * 100).toFixed(2);
+    const atEffect = (by.npm/100 * (by.at-wy.at) * wy.em * 100).toFixed(2);
+    const emEffect = (by.npm/100 * by.at * (by.em-wy.em) * 100).toFixed(2);
+    html += `其中净利率变化贡献 ${npmEffect}pct，周转率贡献 ${atEffect}pct，杠杆贡献 ${emEffect}pct<br>`;
+    const maxEff = Math.max(Math.abs(parseFloat(npmEffect)), Math.abs(parseFloat(atEffect)), Math.abs(parseFloat(emEffect)));
+    let mainDriver = '';
+    if (maxEff === Math.abs(parseFloat(npmEffect))) mainDriver = '净利率是主要驱动因素';
+    else if (maxEff === Math.abs(parseFloat(atEffect))) mainDriver = '资产周转率是主要驱动因素';
+    else mainDriver = '财务杠杆是主要驱动因素';
+    html += `<strong>结论：${mainDriver}</strong></div>`;
+    html += `</div></div>`;
   }
-}
 
-let loadingTimer = null;
+  // Tab: chart
+  html += `<div class="tab-content" data-content="chart-${s.cardId}"><div class="card-body">`;
+  html += `<div class="chart-grid">`;
+  html += `<div class="chart-box"><canvas id="chartRoe-${s.cardId}"></canvas></div>`;
+  html += `<div class="chart-box"><canvas id="chartNpm-${s.cardId}"></canvas></div>`;
+  html += `<div class="chart-box"><canvas id="chartAt-${s.cardId}"></canvas></div>`;
+  html += `<div class="chart-box"><canvas id="chartEm-${s.cardId}"></canvas></div>`;
+  html += `</div></div></div>`;
 
-function showLoadingMsg(name) {
-  const startTime = Date.now();
-  mainContent.innerHTML = `<div class="card"><div class="card-body"><div class="loading"><div class="spinner"></div><p style="margin-top:12px;font-size:15px;font-weight:500">正在获取 ${name} 的财务数据…</p><p style="margin-top:6px;font-size:13px;color:#8899b0" id="loadingHint">首次加载可能需 1-3 分钟（A股较慢），数据会缓存到本地</p></div></div></div>`;
-  if (loadingTimer) clearInterval(loadingTimer);
-  loadingTimer = setInterval(() => {
-    const elapsed = Math.floor((Date.now() - startTime) / 1000);
-    const hint = document.getElementById('loadingHint');
-    if (hint) {
-      if (elapsed > 60) hint.textContent = `⏳ 已等待 ${elapsed}s，A股数据量较大请耐心等待…`;
-      else if (elapsed > 30) hint.textContent = `⏳ 已等待 ${elapsed}s，即将完成…`;
+  // Tab: compare
+  const rdy = stocks.filter(ss => ss.data);
+  if (rdy.length > 1) {
+    html += `<div class="tab-content" data-content="compare-${s.cardId}"><div class="card-body">`;
+    html += renderCompareTable(rdy);
+    html += `<div class="chart-grid">`;
+    html += `<div class="chart-box"><canvas id="chartCompRoe-${s.cardId}"></canvas></div>`;
+    html += `<div class="chart-box"><canvas id="chartCompNpm-${s.cardId}"></canvas></div>`;
+    html += `</div></div></div>`;
+  }
+
+  // Peers
+  if (d.peers && d.peers.length > 0) {
+    const isRef = d.peers.some(p => p.ref);
+    html += `<div class="card" style="margin:16px"><div class="card-header">🏷️ ${isRef ? '同类参考标的' : '同类公司参考'} <span class="text-muted" style="font-weight:400">${isRef ? '暂无同行业标的，提供同市场知名公司作为参考' : '点击可加载其杜邦分析'}</span></div><div class="card-body">`;
+    html += `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:12px">`;
+    for (const p of d.peers) {
+      const already = stocks.some(s => s.code === p.code);
+      html += `<div class="peer-card" data-code="${p.code}" data-market="${p.market}" data-name="${p.name}" onclick="clickPeer(this)" style="padding:14px 16px;background:#f8fafc;border-radius:10px;border:1px solid #edf2f7;cursor:pointer;transition:.15s;${already ? 'opacity:.5' : ''}" onmouseover="this.style.borderColor='#4a6cf7';this.style.background='#f0f4ff'" onmouseout="this.style.borderColor='#edf2f7';this.style.background='#f8fafc'">`;
+      html += `<div style="font-weight:600;font-size:15px;color:#1a1a2e">${p.name}</div>`;
+      html += `<div style="font-size:12px;color:#8899b0;margin-top:2px">${p.code} <span style="display:inline-block;padding:1px 6px;background:#e8edfd;border-radius:4px;font-size:11px;color:#4a6cf7;margin-left:4px">${p.market.toUpperCase()}</span></div>`;
+      html += already ? `<div style="font-size:11px;color:#10b981;margin-top:6px">✓ 已添加</div>` : `<div style="font-size:11px;color:#4a6cf7;margin-top:6px">点击分析 →</div>`;
+      html += `</div>`;
     }
-  }, 5000);
+    html += `</div></div></div>`;
+  }
+
+  html += `</div>`;
+  html += `<div style="padding:8px 0"></div>`;
+
+  // Schedule chart drawing after append
+  setTimeout(() => {
+    _drawStockCharts(s);
+    const rdy2 = stocks.filter(ss => ss.data);
+    if (rdy2.length > 1) _drawCompareCharts(s);
+  }, 80);
+
+  return html;
 }
 
-function showErrorMsg(msg) {
-  if (loadingTimer) clearInterval(loadingTimer);
-  mainContent.innerHTML = `<div class="card"><div class="card-body"><div class="error-box">⚠️ ${msg}</div></div></div>`;
+function _refreshStock(code, market) {
+  const idx = stocks.findIndex(s => s.code.toUpperCase() === code.toUpperCase());
+  if (idx < 0) return;
+  const s = stocks[idx];
+  s.loading = true;
+  s.data = null;
+  renderTags();
+  const card = document.getElementById(s.cardId);
+  if (card) card.innerHTML = `<div class="card-body"><div class="loading"><div class="spinner"></div><p style="margin-top:12px">正在刷新 ${s.name} 的数据…</p></div></div>`;
+
+  fetch(`/api/refresh?code=${encodeURIComponent(code)}&market=${encodeURIComponent(market)}`)
+    .then(resp => { if (!resp.ok) throw new Error('刷新失败'); return resp.json(); })
+    .then(data => {
+      stocks[idx] = {...stocks[idx], name: data.company.name, loading: false, error: false, errorMsg: '', data};
+      renderTags();
+      _appendStockCard(stocks[idx]);
+    })
+    .catch(e => {
+      stocks[idx] = {...stocks[idx], loading: false, error: true, errorMsg: e.message};
+      renderTags();
+      if (card) card.innerHTML = `<div class="card-body"><div class="error-box">⚠️ ${e.message}</div></div>`;
+    });
 }
 
-// ── render main ────────────────────────────────────────────────
-function renderMain() {
-  const ready = stocks.filter(s => s.data && !s.loading && !s.error);
-  if (ready.length === 0) {
-    mainContent.innerHTML = `<div class="card"><div class="card-body" style="text-align:center;padding:60px 20px;color:#8899b0"><p>数据加载中或添加更多股票…</p></div></div>`;
+function clickPeer(el) {
+  const code = el.dataset.code;
+  const market = el.dataset.market;
+  const name = el.dataset.name;
+  const idx = stocks.findIndex(s => s.code === code);
+  if (idx >= 0) {
+    document.getElementById(stocks[idx].cardId)?.scrollIntoView({behavior:'smooth',block:'start'});
     return;
   }
-  if (ready.length === 1) {
-    activeIdx = stocks.findIndex(s => s.data && !s.loading && !s.error);
-    renderSingle(ready[0]);
-  } else {
-    if (activeIdx >= 0) {
-      const s = stocks[activeIdx];
-      if (s && s.data && !s.error && !s.loading) {
-        renderSingle(s);
-        return;
-      }
-    }
-    renderCompare(ready);
-  }
+  addStockWithInfo(code, market, name);
+}
+
+function _drawStockCharts(s) {
+  const d = s.data;
+  if (!d || !d.years) return;
+  const years = d.years.map(y=>y.year);
+  const roes = d.years.map(y=>y.roe);
+  const npms = d.years.map(y=>y.npm);
+  const ats = d.years.map(y=>y.at);
+  const ems = d.years.map(y=>y.em);
+  const cid = s.cardId;
+  makeBar('chartRoe-'+cid, `ROE 趋势 — ${d.company.name}`, years, roes, '#4a6cf7', '%');
+  makeBar('chartNpm-'+cid, `净利率趋势 — ${d.company.name}`, years, npms, '#10b981', '%');
+  makeLine('chartAt-'+cid, `资产周转率趋势 — ${d.company.name}`, years, ats, '#f59e0b', '次');
+  makeLine('chartEm-'+cid, `权益乘数趋势 — ${d.company.name}`, years, ems, '#8b5cf6', '');
+}
+
+function _drawCompareCharts(s) {
+  const ready = stocks.filter(ss => ss.data);
+  if (ready.length < 2) return;
+  const colors = ['#4a6cf7','#10b981','#f59e0b','#ef4444','#8b5cf6','#ec4899'];
+  const yearSets = ready.map(s => new Set(s.data.years.map(y=>y.year)));
+  const common = [...yearSets[0]].filter(y => yearSets.every(ys => ys.has(y))).sort();
+  const cid = s.cardId;
+
+  ['chartCompRoe','chartCompNpm'].forEach((base, i) => {
+    const ctx = document.getElementById(base+'-'+cid);
+    if (!ctx) return;
+    destroyChart(base+'-'+cid);
+    const datasets = ready.map((ss, j) => {
+      const vals = common.map(y => { const yr = ss.data.years.find(vy => vy.year===y); if (!yr) return null; return i===0 ? yr.roe : yr.npm; });
+      return {label: ss.data.company.name, data: vals, borderColor: colors[j%colors.length], backgroundColor: colors[j%colors.length]+'20', fill: false, tension: .3, pointRadius: 3, borderWidth: 2, spanGaps: true};
+    });
+    const labels = ['ROE','净利率'];
+    chartInstances[base+'-'+cid] = new Chart(ctx, {type:'line', data:{labels:common, datasets},
+      options:{responsive:true,maintainAspectRatio:false,plugins:{title:{display:true,text:labels[i],font:{size:13}}},scales:{y:{beginAtZero:true,ticks:{callback:v=>v+(i===0?'%':'%')}}}}});
+  });
+}
+
+function switchTab2(el, group) {
+  const card = el.closest('.card');
+  card.querySelectorAll('.tab-item').forEach(t => t.classList.remove('active'));
+  card.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+  el.classList.add('active');
+  const target = card.querySelector(`[data-content="${el.dataset.tab}"]`);
+  if (target) target.classList.add('active');
+
+  setTimeout(() => {
+    // Find which stock this card belongs to
+    const cid = group.replace(/^(dupont|years|chart|compare)-/,'');
+    const s = stocks.find(ss => ss.cardId === cid);
+    if (!s || !s.data) return;
+    if (el.dataset.tab.startsWith('chart-'+cid)) _drawStockCharts(s);
+    const ready = stocks.filter(ss => ss.data);
+    if (el.dataset.tab.startsWith('compare-'+cid) && ready.length > 1) _drawCompareCharts(s);
+  }, 80);
 }
 
 function yearCell(y, markings, cautionYears) {
@@ -812,8 +960,14 @@ async function fetchValuation(ev, code, market) {
       }
     }
     if (filled > 0) {
-      btn.textContent = '✅ ' + filled;
+      const labels = {pe_ttm:'PE', pb:'PB', ps:'PS', pcf:'PCF'};
+      const names = [];
+      for (const [mKey, apiKey] of Object.entries(keyMap)) {
+        if (data[apiKey] !== null && data[apiKey] !== undefined) names.push(labels[mKey]);
+      }
+      btn.textContent = '✅ ' + names.join(',');
       btn.style.background = '#059669';
+      btn.style.fontSize = '10px';
     } else {
       btn.textContent = '⚠️ 无数据';
       btn.style.background = '#f59e0b';
@@ -829,230 +983,8 @@ function renderPegButton(code, market) {
   return `<button onclick="loadPeg('${code}','${market}')" style="display:inline-flex;align-items:center;gap:6px;margin-top:10px;background:linear-gradient(135deg,#4a6cf7,#6d8aff);color:#fff;border:none;border-radius:8px;padding:10px 18px;font-size:13px;font-weight:600;cursor:pointer;box-shadow:0 2px 8px rgba(74,108,247,.25);transition:all .2s" onmouseover="this.style.transform='translateY(-1px)';this.style.boxShadow='0 4px 12px rgba(74,108,247,.35)'" onmouseout="this.style.transform='';this.style.boxShadow='0 2px 8px rgba(74,108,247,.25)'">💹 估值参考 <span style="font-size:10px;font-weight:400;opacity:.85"> 五大指标</span></button>`;
 }
 
-// ── single stock view ──────────────────────────────────────────
-function refreshStock(code, market) {
-  const idx = stocks.findIndex(s => s.code.toUpperCase() === code.toUpperCase());
-  if (idx < 0) return;
-  stocks[idx].loading = true;
-  stocks[idx].data = null;
-  delete stocks[idx].error;
-  stocks[idx].errorMsg = '';
-  activeIdx = idx;
-  renderTags();
-  showLoadingMsg(stocks[idx].name);
 
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 90000);
-  fetch(`/api/refresh?code=${encodeURIComponent(code)}&market=${encodeURIComponent(market)}`, {signal: controller.signal})
-    .then(resp => {
-      if (!resp.ok) throw new Error('刷新数据失败，请稍后重试');
-      return resp.json();
-    })
-    .then(data => {
-      clearTimeout(timeout);
-      stocks[idx] = {code, market, name: data.company.name, loading: false, error: false, errorMsg: '', data};
-      renderTags();
-      renderMain();
-    })
-    .catch(e => {
-      clearTimeout(timeout);
-      const msg = e.name === 'AbortError' ? '刷新超时' : e.message;
-      stocks[idx].loading = false;
-      stocks[idx].error = true;
-      stocks[idx].errorMsg = msg;
-      renderTags();
-      renderMain();
-    });
-}
 
-function refreshAll() {
-  const ready = stocks.filter(s => s.data && !s.loading && !s.error);
-  if (ready.length === 0) return;
-  // Refresh all stocks in parallel
-  activeIdx = -1;
-  for (const s of ready) {
-    const idx = stocks.findIndex(x => x.code === s.code);
-    if (idx >= 0) {
-      stocks[idx].loading = true;
-      stocks[idx].data = null;
-    }
-  }
-  renderTags();
-  showLoadingMsg('全部股票');
-  const pending = ready.map(s =>
-    fetch(`/api/refresh?code=${encodeURIComponent(s.code)}&market=${encodeURIComponent(s.market)}`)
-      .then(resp => { if (!resp.ok) throw new Error('fail'); return resp.json(); })
-      .catch(e => null)
-  );
-  Promise.all(pending).then(results => {
-    for (let i = 0; i < ready.length; i++) {
-      const idx = stocks.findIndex(x => x.code === ready[i].code);
-      if (idx >= 0 && results[i]) {
-        stocks[idx] = {code: ready[i].code, market: ready[i].market, name: results[i].company.name, loading: false, error: false, errorMsg: '', data: results[i]};
-      } else if (idx >= 0) {
-        stocks[idx].loading = false;
-        stocks[idx].error = true;
-        stocks[idx].errorMsg = '刷新失败';
-      }
-    }
-    renderTags();
-    renderMain();
-  });
-}
-
-function renderSingle(s) {
-  const d = s.data;
-  const y = d.years;
-  const by = d.best_year;
-  const wy = d.worst_year;
-
-  let html = `<div class="card"><div class="card-header">📊 ${d.company.name} <span style="font-weight:400;font-size:13px;color:#8899b0">(${d.company.code}) — 杜邦分析</span>`;
-  html += `<button onclick="refreshStock('${s.code}','${s.market}')" style="float:right;background:#f0f2f5;border:1px solid #e2e8f0;border-radius:6px;padding:4px 10px;font-size:12px;cursor:pointer;color:#4a5568;margin-left:6px" title="刷新该股票数据">🔄</button>`;
-  if (stocks.filter(s=>s.data).length > 1) html += `<button onclick="activeIdx=-1;renderMain()" style="float:right;background:#f0f2f5;border:1px solid #e2e8f0;border-radius:6px;padding:4px 12px;font-size:12px;cursor:pointer;color:#4a5568">← 回到对比</button>`;
-  html += `</div>`;
-
-  html += `<div style="clear:both"></div>`;
-
-  // Tab bar
-  html += `<div class="tab-bar">`;
-  html += `<div class="tab-item active" data-tab="dupont" onclick="switchTab(this)">杜邦分解</div>`;
-  if (by && wy) html += `<div class="tab-item" data-tab="years" onclick="switchTab(this)">最优/最差年份</div>`;
-  html += `<div class="tab-item" data-tab="chart" onclick="switchTab(this)">趋势图</div>`;
-  if (stocks.filter(s=>s.data).length > 1) html += `<div class="tab-item" data-tab="compare" onclick="switchTab(this)">对比</div>`;
-  html += `</div>`;
-
-  // Tab content: dupont
-  html += `<div class="tab-content active" data-content="dupont"><div class="card-body">`;
-  html += renderProfile(d.profile);
-  const markings = {best: by ? by.year : null, worst: wy ? wy.year : null};
-  const cautionYears = (d.cautions || []).map(c => c.year);
-  html += `<div style="display:flex;gap:12px;font-size:12px;color:#4a5568;margin-bottom:8px">
-    <span>🏆 最优年份</span><span>⚠️ 最差年份</span><span>🔔 警惕年份</span>
-  </div>`;
-  html += dupontTable(y, markings, cautionYears);
-  html += renderAnalysis(d);
-  html += renderPegButton(s.code, s.market);
-  html += `<div id="pegBox-${s.code}" style="margin-top:12px"></div>`;
-  html += `</div></div>`;
-
-  // Tab content: best/worst years
-  if (by && wy) {
-    html += `<div class="tab-content" data-content="years"><div class="card-body"><div class="year-compare">`;
-
-    // best
-    html += `<div class="year-card best"><h3>🏆 最优年份</h3>`;
-    html += `<div class="val text-green">${by.year}年</div>`;
-    html += `<div style="font-size:32px;font-weight:700;color:#10b981;margin:6px 0">ROE ${by.roe}%</div>`;
-    html += `<div class="items">`;
-    html += `<div class="item"><div class="l">净利率</div><div class="v">${by.npm}%</div></div>`;
-    html += `<div class="item"><div class="l">资产周转率</div><div class="v">${by.at}</div></div>`;
-    html += `<div class="item"><div class="l">权益乘数</div><div class="v">${by.em}</div></div>`;
-    html += `</div></div>`;
-
-    // worst
-    html += `<div class="year-card worst"><h3>⚠️ 最差年份</h3>`;
-    html += `<div class="val text-red">${wy.year}年</div>`;
-    html += `<div style="font-size:32px;font-weight:700;color:#ef4444;margin:6px 0">ROE ${wy.roe}%</div>`;
-    html += `<div class="items">`;
-    html += `<div class="item"><div class="l">净利率</div><div class="v">${wy.npm}%</div></div>`;
-    html += `<div class="item"><div class="l">资产周转率</div><div class="v">${wy.at}</div></div>`;
-    html += `<div class="item"><div class="l">权益乘数</div><div class="v">${wy.em}</div></div>`;
-    html += `</div></div>`;
-
-    html += `</div>`;
-
-    // Gap analysis
-    const gapNpm = (by.npm - wy.npm).toFixed(2);
-    const gapAt = (by.at - wy.at).toFixed(4);
-    const gapEm = (by.em - wy.em).toFixed(4);
-    html += `<div style="margin-top:20px;padding:16px;background:#f8fafc;border-radius:8px;font-size:13px;line-height:1.8">`;
-    html += `<strong>差距分析：</strong>最优年份(${by.year}) vs 最差年份(${wy.year})<br>`;
-    html += `净利率差距 ${gapNpm}pct，周转率差距 ${gapAt}，权益乘数差距 ${gapEm}<br>`;
-    // Determine main driver
-    const npmEffect = ((by.npm-wy.npm)/100 * wy.at * wy.em * 100).toFixed(2);
-    const atEffect = (by.npm/100 * (by.at-wy.at) * wy.em * 100).toFixed(2);
-    const emEffect = (by.npm/100 * by.at * (by.em-wy.em) * 100).toFixed(2);
-    html += `其中净利率变化贡献 ${npmEffect}pct，周转率贡献 ${atEffect}pct，杠杆贡献 ${emEffect}pct<br>`;
-    const maxEff = Math.max(Math.abs(parseFloat(npmEffect)), Math.abs(parseFloat(atEffect)), Math.abs(parseFloat(emEffect)));
-    let mainDriver = '';
-    if (maxEff === Math.abs(parseFloat(npmEffect))) mainDriver = '净利率是主要驱动因素';
-    else if (maxEff === Math.abs(parseFloat(atEffect))) mainDriver = '资产周转率是主要驱动因素';
-    else mainDriver = '财务杠杆是主要驱动因素';
-    html += `<strong>结论：${mainDriver}</strong>`;
-    html += `</div>`;
-
-    html += `</div></div>`;
-  }
-
-  // Tab content: chart
-  html += `<div class="tab-content" data-content="chart"><div class="card-body">`;
-  html += `<div class="chart-grid">`;
-  html += `<div class="chart-box"><canvas id="chartRoe"></canvas></div>`;
-  html += `<div class="chart-box"><canvas id="chartNpm"></canvas></div>`;
-  html += `<div class="chart-box"><canvas id="chartAt"></canvas></div>`;
-  html += `<div class="chart-box"><canvas id="chartEm"></canvas></div>`;
-  html += `</div></div></div>`;
-
-  // Tab content: compare (only if multi stock)
-  const ready = stocks.filter(s => s.data);
-  if (ready.length > 1) {
-    html += `<div class="tab-content" data-content="compare"><div class="card-body">`;
-    html += renderCompareTable(ready);
-    html += `<div class="chart-grid">`;
-    html += `<div class="chart-box"><canvas id="chartCompRoe"></canvas></div>`;
-    html += `<div class="chart-box"><canvas id="chartCompNpm"></canvas></div>`;
-    html += `</div></div></div>`;
-  }
-
-  // ── peers section ──
-  if (d.peers && d.peers.length > 0) {
-    const isRef = d.peers.some(p => p.ref);
-    html += `<div class="card" style="margin-top:16px"><div class="card-header">🏷️ ${isRef ? '同类参考标的' : '同类公司参考'} <span class="text-muted" style="font-weight:400">${isRef ? '暂无同行业标的，提供同市场知名公司作为参考' : '点击可加载其杜邦分析'}</span></div><div class="card-body">`;
-    html += `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:12px">`;
-    for (const p of d.peers) {
-      const already = stocks.some(s => s.code === p.code);
-      html += `<div class="peer-card" data-code="${p.code}" data-market="${p.market}" data-name="${p.name}" onclick="clickPeer(this)" style="padding:14px 16px;background:#f8fafc;border-radius:10px;border:1px solid #edf2f7;cursor:pointer;transition:.15s;${already ? 'opacity:.5' : ''}" onmouseover="this.style.borderColor='#4a6cf7';this.style.background='#f0f4ff'" onmouseout="this.style.borderColor='#edf2f7';this.style.background='#f8fafc'">`;
-      html += `<div style="font-weight:600;font-size:15px;color:#1a1a2e">${p.name}</div>`;
-      html += `<div style="font-size:12px;color:#8899b0;margin-top:2px">${p.code} <span style="display:inline-block;padding:1px 6px;background:#e8edfd;border-radius:4px;font-size:11px;color:#4a6cf7;margin-left:4px">${p.market.toUpperCase()}</span></div>`;
-      html += already ? `<div style="font-size:11px;color:#10b981;margin-top:6px">✓ 已添加</div>` : `<div style="font-size:11px;color:#4a6cf7;margin-top:6px">点击分析 →</div>`;
-      html += `</div>`;
-    }
-    html += `</div></div></div>`;
-  }
-
-  html += `</div>`;
-  mainContent.innerHTML = html;
-
-  // Draw charts
-  setTimeout(() => drawCharts(d), 50);
-  if (ready.length > 1) setTimeout(() => drawCompareCharts(ready), 100);
-}
-
-// ── peer click handler ──
-function clickPeer(el) {
-  const code = el.dataset.code;
-  const market = el.dataset.market;
-  const name = el.dataset.name;
-  const idx = stocks.findIndex(s => s.code === code);
-  if (idx >= 0) { selectStock(idx); return; }
-  addStockWithInfo(code, market, name);
-}
-
-// ── compare view ──────────────────────────────────────────────
-function renderCompare(ready) {
-  let html = `<div class="card"><div class="card-header">📊 多股对比`;
-  html += `<button onclick="refreshAll()" style="float:right;background:#f0f2f5;border:1px solid #e2e8f0;border-radius:6px;padding:4px 10px;font-size:12px;cursor:pointer;color:#4a5568;margin-left:6px" title="刷新全部股票数据">🔄 全部刷新</button>`;
-  html += `</div><div class="card-body">`;
-  html += renderCompareTable(ready);
-  html += `<div class="chart-grid">`;
-  html += `<div class="chart-box"><canvas id="chartCompRoe"></canvas></div>`;
-  html += `<div class="chart-box"><canvas id="chartCompNpm"></canvas></div>`;
-  html += `<div class="chart-box"><canvas id="chartCompAt"></canvas></div>`;
-  html += `<div class="chart-box"><canvas id="chartCompEm"></canvas></div>`;
-  html += `</div></div></div>`;
-  mainContent.innerHTML = html;
-  setTimeout(() => drawCompareCharts(ready), 50);
-}
 
 function renderCompareTable(ready) {
   // Get common years
@@ -1081,18 +1013,11 @@ function renderCompareTable(ready) {
   return html + `</table></div>`;
 }
 
-// ── charts ─────────────────────────────────────────────────────
-function drawCharts(d) {
-  const years = d.years.map(y=>y.year);
-  const roes = d.years.map(y=>y.roe);
-  const npms = d.years.map(y=>y.npm);
-  const ats = d.years.map(y=>y.at);
-  const ems = d.years.map(y=>y.em);
+// ── chart helpers ──────────────────────────────────────────────
+const chartInstances = {};
 
-  makeBar('chartRoe', `ROE 趋势 — ${d.company.name}`, years, roes, '#4a6cf7', '%');
-  makeBar('chartNpm', `净利率趋势 — ${d.company.name}`, years, npms, '#10b981', '%');
-  makeLine('chartAt', `资产周转率趋势 — ${d.company.name}`, years, ats, '#f59e0b', '次');
-  makeLine('chartEm', `权益乘数趋势 — ${d.company.name}`, years, ems, '#8b5cf6', '');
+function destroyChart(id) {
+  if (chartInstances[id]) { chartInstances[id].destroy(); delete chartInstances[id]; }
 }
 
 function makeBar(id, label, labels, data, color, suffix) {
@@ -1107,52 +1032,9 @@ function makeLine(id, label, labels, data, color, suffix) {
   const ctx = document.getElementById(id);
   if (!ctx) return;
   destroyChart(id);
-  const fill = id === 'chartEm' ? false : id === 'chartAt' ? {target:'origin',above:color+'15'} : false;
+  const fill = id.includes('Em') ? false : id.includes('At') ? {target:'origin',above:color+'15'} : false;
   chartInstances[id] = new Chart(ctx, {type:'line', data:{labels, datasets:[{label, data, borderColor:color, backgroundColor:color+'20', fill, tension:.3, pointRadius:4, pointBackgroundColor:color, borderWidth:2}]},
     options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{y:{beginAtZero:true,ticks:{callback:v=>v+suffix}}}}});
-}
-
-const chartInstances = {};
-
-function destroyChart(id) {
-  if (chartInstances[id]) { chartInstances[id].destroy(); delete chartInstances[id]; }
-}
-
-function drawCompareCharts(ready) {
-  const colors = ['#4a6cf7','#10b981','#f59e0b','#ef4444','#8b5cf6','#ec4899'];
-  const yearSets = ready.map(s => new Set(s.data.years.map(y=>y.year)));
-  const common = [...yearSets[0]].filter(y => yearSets.every(ys => ys.has(y))).sort();
-
-  ['chartCompRoe','chartCompNpm','chartCompAt','chartCompEm'].forEach((id, i) => {
-    const ctx = document.getElementById(id);
-    if (!ctx) return;
-    destroyChart(id);
-    const datasets = ready.map((s, j) => {
-      const vals = common.map(y => { const yr = s.data.years.find(vy => vy.year===y); if (!yr) return null; return i===0 ? yr.roe : i===1 ? yr.npm : i===2 ? yr.at : yr.em; });
-      return {label: s.data.company.name, data: vals, borderColor: colors[j%colors.length], backgroundColor: colors[j%colors.length]+'20', fill: false, tension: .3, pointRadius: 3, borderWidth: 2, spanGaps: true};
-    });
-    const labels = ['ROE','净利率','周转率','权益乘数'];
-    const suffixes = ['%','%','次',''];
-    chartInstances[id] = new Chart(ctx, {type:'line', data:{labels:common, datasets},
-      options:{responsive:true,maintainAspectRatio:false,plugins:{title:{display:true,text:labels[i],font:{size:13}}},scales:{y:{beginAtZero:true,ticks:{callback:v=>v+suffixes[i]}}}}});
-  });
-}
-
-// ── tab switching ──────────────────────────────────────────────
-function switchTab(el) {
-  const parent = el.closest('.card') || document;
-  parent.querySelectorAll('.tab-item').forEach(t => t.classList.remove('active'));
-  parent.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
-  el.classList.add('active');
-  const target = parent.querySelector(`[data-content="${el.dataset.tab}"]`);
-  if (target) target.classList.add('active');
-
-  // Re-render charts in case canvas was hidden
-  setTimeout(() => {
-    const ready = stocks.filter(s => s.data);
-    if (ready.length === 1) drawCharts(ready[0].data);
-    if (ready.length > 1) drawCompareCharts(ready);
-  }, 50);
 }
 
 // ── init ───────────────────────────────────────────────────────
