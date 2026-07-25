@@ -299,9 +299,7 @@ async function addStock(code) {
 
   if (stocks.some(s => s.code.toUpperCase() === val.toUpperCase())) {
     const existing = stocks.find(s => s.code.toUpperCase() === val.toUpperCase());
-    if (existing?.cardId) {
-      document.getElementById(existing.cardId)?.scrollIntoView({behavior:'smooth',block:'start'});
-    }
+    if (existing) selectStock(stocks.indexOf(existing));
     return;
   }
   addStockWithInfo(val, detectMarket(val), val);
@@ -309,7 +307,7 @@ async function addStock(code) {
 
 function addStockWithInfo(code, market, name) {
   const idx = stocks.length;
-  const cardId = `sc-${code}-${Date.now()}`;
+  const cardId = `sc-${code}`;
   stocks.push({code, market, name, loading: true, error: false, errorMsg: '', cardId});
   renderTags();
   _showLoadingCard(cardId, name);
@@ -328,6 +326,7 @@ function addStockWithInfo(code, market, name) {
       stocks[idx] = {...stocks[idx], name: data.company.name, loading: false, error: false, errorMsg: '', data};
       renderTags();
       _appendStockCard(stocks[idx]);
+      selectStock(idx);
     })
     .catch(e => {
       clearTimeout(timeout);
@@ -342,8 +341,14 @@ function removeStock(idx) {
   const card = document.getElementById(stocks[idx]?.cardId);
   if (card) card.remove();
   stocks.splice(idx, 1);
+  if (stocks.length === 0) {
+    mainContent.innerHTML = EMPTY_HTML;
+    activeIdx = -1;
+  } else {
+    const next = Math.min(idx, stocks.length - 1);
+    selectStock(next);
+  }
   renderTags();
-  if (stocks.length === 0) mainContent.innerHTML = EMPTY_HTML;
 }
 
 const EMPTY_HTML = `<div class="card"><div class="card-body" style="text-align:center;padding:60px 20px;color:#8899b0">
@@ -369,37 +374,81 @@ async function quickCompare(btn) {
   }
 }
 
+let activeIdx = -1;
+
+function selectStock(idx) {
+  activeIdx = idx;
+  renderTags();
+  stocks.forEach((s, i) => {
+    const el = document.getElementById(s.cardId);
+    if (el) el.style.display = i === idx ? '' : 'none';
+  });
+}
+
 function renderTags() {
   stockTags.innerHTML = stocks.map((s, i) => {
-    const bg = s.error ? '#fef2f2' : '#e8edfd';
+    const isActive = i === activeIdx;
+    const bg = s.error ? '#fef2f2' : (isActive ? '#dbe4ff' : '#e8edfd');
+    const border = isActive ? '2px solid #4a6cf7' : '2px solid transparent';
     if (s.error && s.errorMsg) {
-      return `<span class="stock-tag" title="${s.errorMsg}" style="background:${bg};color:#dc2626;cursor:default">⚠️ ${s.name} <span class="del" onclick="event.stopPropagation();removeStock(${i})">×</span></span>`;
+      return `<span class="stock-tag" onclick="selectStock(${i})" title="${s.errorMsg}" style="background:${bg};color:#dc2626;border:${border};cursor:pointer">⚠️ ${s.name} <span class="del" onclick="event.stopPropagation();removeStock(${i})">×</span></span>`;
     }
-    return `<span class="stock-tag" onclick="document.getElementById('${s.cardId}')?.scrollIntoView({behavior:'smooth',block:'start'});renderTags();" style="background:${bg};cursor:pointer">${s.loading ? '⏳' : ''} ${s.name} <span class="del" onclick="event.stopPropagation();removeStock(${i})">×</span></span>`;
+    return `<span class="stock-tag" onclick="selectStock(${i})" style="background:${bg};border:${border};cursor:pointer">${s.loading ? '⏳' : ''} ${s.name} <span class="del" onclick="event.stopPropagation();removeStock(${i})">×</span></span>`;
   }).join('');
 }
 
 function _appendStockCard(s) {
   const existing = document.getElementById(s.cardId);
   if (existing) existing.remove();
-  const html = _buildStockCard(s);
-  if (mainContent.querySelector('.empty-placeholder')) mainContent.innerHTML = '';
-  mainContent.insertAdjacentHTML('beforeend', html);
+  // ensure wrapper exists
+  let wrap = document.getElementById('stockViews');
+  if (!wrap) {
+    wrap = document.createElement('div');
+    wrap.id = 'stockViews';
+    mainContent.innerHTML = '';
+    mainContent.appendChild(wrap);
+  }
+  const div = document.createElement('div');
+  div.id = s.cardId;
+  div.innerHTML = _buildStockCard(s);
+  // hide all existing views, then append
+  wrap.querySelectorAll('[id^="sc-"]').forEach(el => el.style.display = 'none');
+  wrap.appendChild(div);
+  div.style.display = '';
 }
 
 function _showLoadingCard(cardId, name) {
   const existing = document.getElementById(cardId);
   if (existing) existing.remove();
-  const html = `<div id="${cardId}" class="card"><div class="card-body"><div class="loading"><div class="spinner"></div><p style="margin-top:12px;font-size:15px;font-weight:500">正在获取 ${name} 的财务数据…</p><p style="margin-top:6px;font-size:13px;color:#8899b0">首次加载可能需 1-3 分钟（A股较慢），数据会缓存到本地</p></div></div></div>`;
-  if (mainContent.querySelector('.empty-placeholder')) mainContent.innerHTML = '';
-  mainContent.insertAdjacentHTML('beforeend', html);
+  let wrap = document.getElementById('stockViews');
+  if (!wrap) {
+    wrap = document.createElement('div');
+    wrap.id = 'stockViews';
+    mainContent.innerHTML = '';
+    mainContent.appendChild(wrap);
+  }
+  const div = document.createElement('div');
+  div.id = cardId;
+  div.innerHTML = `<div class="card"><div class="card-body"><div class="loading"><div class="spinner"></div><p style="margin-top:12px;font-size:15px;font-weight:500">正在获取 ${name} 的财务数据…</p><p style="margin-top:6px;font-size:13px;color:#8899b0">首次加载可能需 1-3 分钟（A股较慢），数据会缓存到本地</p></div></div></div>`;
+  wrap.querySelectorAll('[id^="sc-"]').forEach(el => el.style.display = 'none');
+  wrap.appendChild(div);
 }
 
 function _showErrorCard(cardId, code, name, msg) {
   const existing = document.getElementById(cardId);
   if (existing) existing.remove();
-  const html = `<div id="${cardId}" class="card"><div class="card-body"><div class="error-box">⚠️ [${code}] ${name} — ${msg}</div></div></div>`;
-  mainContent.insertAdjacentHTML('beforeend', html);
+  let wrap = document.getElementById('stockViews');
+  if (!wrap) {
+    wrap = document.createElement('div');
+    wrap.id = 'stockViews';
+    mainContent.innerHTML = '';
+    mainContent.appendChild(wrap);
+  }
+  const div = document.createElement('div');
+  div.id = cardId;
+  div.innerHTML = `<div class="card"><div class="card-body"><div class="error-box">⚠️ [${code}] ${name} — ${msg}</div></div></div>`;
+  wrap.querySelectorAll('[id^="sc-"]').forEach(el => el.style.display = 'none');
+  wrap.appendChild(div);
 }
 
 function _buildStockCard(s) {
@@ -772,7 +821,7 @@ function loadPeg(code, market) {
           <strong>原理：</strong>${m.reason}
         </div>
         <div style="display:flex;gap:6px;align-items:center">
-          <button onclick="fetchValuation(event,'${code}','${s.market}')" title="从网络获取实时数据" style="background:#10b981;color:#fff;border:none;border-radius:6px;padding:7px 10px;font-size:11px;font-weight:600;cursor:pointer;white-space:nowrap">获取</button>
+          <button onclick="fetchSingleMetric(event,'${code}','${m.key}','${s.market}')" title="从网络获取实时 ${m.label}" style="background:#10b981;color:#fff;border:none;border-radius:6px;padding:7px 10px;font-size:11px;font-weight:600;cursor:pointer;white-space:nowrap" id="fetchBtn-${code}-${m.key}">获取</button>
           <input id="pegVal-${code}-${m.key}" type="number" step="0.01" placeholder="输入 ${m.label.split('(')[0]}" style="flex:1;padding:7px 10px;border:1px solid #d1d9e6;border-radius:6px;font-size:13px;outline:none" onkeydown="if(event.key==='Enter')calcMetric('${code}','${m.key}')">
           <button onclick="calcMetric('${code}','${m.key}')" style="background:#4a6cf7;color:#fff;border:none;border-radius:6px;padding:7px 14px;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap">计算</button>
         </div>
@@ -941,33 +990,32 @@ function calcCagr(vals, yearsBack) {
   return (Math.pow(end / start, 1.0 / yearsBack) - 1) * 100;
 }
 
-async function fetchValuation(ev, code, market) {
+const METRIC_API_KEY = {pe_ttm:'pe', pb:'pb', ps:'ps', pcf:'pcf', ev_ebitda:null};
+const METRIC_LABEL = {pe_ttm:'PE', pb:'PB', ps:'PS', pcf:'PCF', ev_ebitda:'EV/EBITDA'};
+
+async function fetchSingleMetric(ev, code, metricKey, market) {
   const btn = ev.target;
-  const orig = btn.textContent;
+  if (btn.dataset.fetched) return;
+  const apiKey = METRIC_API_KEY[metricKey];
+  if (!apiKey) {
+    btn.textContent = '⚠️ 无API';
+    btn.style.background = '#f59e0b';
+    return;
+  }
   btn.textContent = '...';
   btn.disabled = true;
   try {
     const resp = await fetch(`/api/valuation?code=${encodeURIComponent(code)}&market=${encodeURIComponent(market)}`);
     if (!resp.ok) throw new Error('err');
     const data = await resp.json();
-    const keyMap = {pe_ttm:'pe', pb:'pb', ps:'ps', pcf:'pcf'};
-    let filled = 0;
-    for (const [mKey, apiKey] of Object.entries(keyMap)) {
-      const inp = document.getElementById(`pegVal-${code}-${mKey}`);
-      if (inp && data[apiKey] !== null && data[apiKey] !== undefined) {
-        inp.value = data[apiKey].toFixed(2);
-        filled++;
-      }
-    }
-    if (filled > 0) {
-      const labels = {pe_ttm:'PE', pb:'PB', ps:'PS', pcf:'PCF'};
-      const names = [];
-      for (const [mKey, apiKey] of Object.entries(keyMap)) {
-        if (data[apiKey] !== null && data[apiKey] !== undefined) names.push(labels[mKey]);
-      }
-      btn.textContent = '✅ ' + names.join(',');
+    const val = data[apiKey];
+    const inp = document.getElementById(`pegVal-${code}-${metricKey}`);
+    if (inp && val !== null && val !== undefined) {
+      inp.value = val.toFixed(2);
+      btn.textContent = '✓ ' + METRIC_LABEL[metricKey];
       btn.style.background = '#059669';
-      btn.style.fontSize = '10px';
+      btn.dataset.fetched = '1';
+      btn.style.cursor = 'default';
     } else {
       btn.textContent = '⚠️ 无数据';
       btn.style.background = '#f59e0b';
@@ -976,7 +1024,13 @@ async function fetchValuation(ev, code, market) {
     btn.textContent = '⚠️ 失败';
     btn.style.background = '#ef4444';
   }
-  setTimeout(() => { btn.textContent = '获取'; btn.disabled = false; btn.style.background = '#10b981'; }, 2500);
+  setTimeout(() => {
+    if (!btn.dataset.fetched) {
+      btn.textContent = '获取';
+      btn.disabled = false;
+      btn.style.background = '#10b981';
+    }
+  }, 3000);
 }
 
 function renderPegButton(code, market) {
