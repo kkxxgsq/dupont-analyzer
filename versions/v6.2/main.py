@@ -1082,6 +1082,51 @@ function _toggleCompareBtn() {
   btn.style.display = cnt >= 2 ? '' : 'none';
 }
 
+function _renderCompareChartsOffscreen() {
+  const ready = stocks.filter(s => s.data);
+  if (ready.length < 2) return null;
+  const wrap = document.createElement('div');
+  wrap.style.cssText = 'position:fixed;left:-9999px;top:0;z-index:-1';
+  document.body.appendChild(wrap);
+  const colors = ['#4a6cf7','#10b981','#f59e0b','#ef4444','#8b5cf6','#ec4899'];
+  const yearSets = ready.map(s => new Set(s.data.years.map(y=>y.year)));
+  const common = [...yearSets[0]].filter(y => yearSets.every(ys => ys.has(y))).sort();
+  const chartKeys = [
+    {id:'_tmpRoe', key:'roe', label:'ROE', suffix:'%'},
+    {id:'_tmpNpm', key:'npm', label:'净利率', suffix:'%'},
+    {id:'_tmpAt', key:'at', label:'周转率', suffix:''},
+    {id:'_tmpEm', key:'em', label:'杠杆', suffix:''},
+  ];
+  const urls = {};
+  for (const k of chartKeys) {
+    const canvas = document.createElement('canvas');
+    canvas.id = k.id; canvas.width = 380; canvas.height = 200;
+    wrap.appendChild(canvas);
+    const ctx2d = canvas.getContext('2d');
+    ctx2d.fillStyle = '#fff'; ctx2d.fillRect(0, 0, 380, 200);
+    const datasets = ready.map((ss, j) => ({
+      label: ss.data.company.name,
+      data: common.map(y => { const yr = ss.data.years.find(vy => vy.year === y); return yr ? yr[k.key] : null; }),
+      borderColor: colors[j % colors.length],
+      backgroundColor: colors[j % colors.length] + '20',
+      fill: false, tension: .3, pointRadius: 3, borderWidth: 2, spanGaps: true,
+    }));
+    const chart = new Chart(canvas, {
+      type: 'line',
+      data: { labels: common, datasets },
+      options: {
+        responsive: false,
+        plugins: { title: { display: true, text: k.label + '对比', font: { size: 13, weight: 'bold' } }, legend: { labels: { font: { size: 11 } } } },
+        scales: { y: { beginAtZero: true, ticks: { callback: v => v + k.suffix } } },
+      },
+    });
+    urls[k.key] = canvas.toDataURL('image/png');
+    chart.destroy();
+  }
+  document.body.removeChild(wrap);
+  return urls;
+}
+
 function exportFullMd() {
   try {
   const ready = stocks.filter(s => s.data);
@@ -1230,22 +1275,15 @@ function exportFullMd() {
     }
     md += `</table>\n\n`;
 
-    // Comparison charts
-    const first = stocks.find(s => s.data);
-    if (first) {
-      _drawCompareCharts(first);
-      const cid = first.cardId;
-      const compCharts = [
-        {id: `chartCompRoe-${cid}`, label: 'ROE 对比'},
-        {id: `chartCompNpm-${cid}`, label: '净利率对比'},
-      ];
+    // Comparison charts (rendered off-screen to avoid blank images)
+    const chartUrls = _renderCompareChartsOffscreen();
+    if (chartUrls) {
       md += `### 📈 趋势对比图\n\n`;
-      for (const c of compCharts) {
-        const el = document.getElementById(c.id);
-        if (el) {
-          const url = el.toDataURL('image/png');
-          md += `**${c.label}**\n\n`;
-          md += `![${c.label}](${url})\n\n`;
+      const labels = {roe:'ROE', npm:'净利率', at:'周转率', em:'杠杆'};
+      for (const [key, label] of Object.entries(labels)) {
+        if (chartUrls[key]) {
+          md += `**${label}对比**\n\n`;
+          md += `![${label}对比](${chartUrls[key]})\n\n`;
         }
       }
     }
@@ -1488,52 +1526,49 @@ function exportCompare() {
   const colors = ['#4a6cf7','#10b981','#f59e0b','#ef4444','#8b5cf6','#ec4899'];
   const yearSets = ready.map(s => new Set(s.data.years.map(y=>y.year)));
   const common = [...yearSets[0]].filter(y => yearSets.every(ys => ys.has(y))).sort();
+  const chartUrls = _renderCompareChartsOffscreen();
 
-  // Draw compare charts on first stock's card
-  const first = stocks.find(s => s.data);
-  _drawCompareCharts(first);
-  const cid = first.cardId;
+  let h = _cardHeader('📊 多股对比分析', `${ready.map(s=>s.data.company.name).join(' vs ')}`);
+  h += `<div style="padding:24px 32px">`;
 
-  setTimeout(() => {
-    const roeUrl = document.getElementById(`chartCompRoe-${cid}`)?.toDataURL('image/png') || '';
-    const npmUrl = document.getElementById(`chartCompNpm-${cid}`)?.toDataURL('image/png') || '';
-
-    let h = _cardHeader('📊 多股对比分析', `${ready.map(s=>s.data.company.name).join(' vs ')}`);
-    h += `<div style="padding:24px 32px">`;
-
-    // Comparison table
-    h += `<div style="font-size:14px;font-weight:600;color:#1a1a2e;margin-bottom:12px">📊 关键指标对比</div>`;
-    h += `<div style="overflow-x:auto;margin-bottom:24px"><table style="width:100%;border-collapse:collapse;font-size:12px;min-width:600px">`;
-    h += `<tr style="background:#f0f4ff"><th style="padding:8px 10px;text-align:left;border-bottom:2px solid #dbe4ff">年份</th>`;
-    ready.forEach((s,i) => { h += `<th colspan="4" style="padding:8px 10px;text-align:center;border-bottom:2px solid #dbe4ff;color:${colors[i%colors.length]};font-weight:600">${s.data.company.name}</th>`; });
-    h += `</tr><tr style="background:#f8faff"><th style="padding:6px 10px;border-bottom:1px solid #e2e8f0"></th>`;
-    ready.forEach(() => { h += `<th style="padding:6px 10px;text-align:center;border-bottom:1px solid #e2e8f0;font-size:11px;color:#8899b0">净利率</th><th style="padding:6px 10px;text-align:center;border-bottom:1px solid #e2e8f0;font-size:11px;color:#8899b0">周转率</th><th style="padding:6px 10px;text-align:center;border-bottom:1px solid #e2e8f0;font-size:11px;color:#8899b0">杠杆</th><th style="padding:6px 10px;text-align:center;border-bottom:1px solid #e2e8f0;font-size:11px;color:#8899b0">ROE</th>`; });
-    h += `</tr>`;
-    for (const yr of common) {
-      h += `<tr style="border-bottom:1px solid #edf2f7"><td style="padding:6px 10px;font-weight:500">${yr}</td>`;
-      for (const s of ready) {
-        const y = s.data.years.find(vy => vy.year === yr);
-        if (y) {
-          const cls = y.roe > 15 ? 'color:#10b981;font-weight:600' : y.roe < 5 ? 'color:#ef4444;font-weight:600' : '';
-          h += `<td style="padding:6px 10px;text-align:center">${y.npm}%</td><td style="padding:6px 10px;text-align:center">${y.at}</td><td style="padding:6px 10px;text-align:center">${y.em}</td><td style="padding:6px 10px;text-align:center;${cls}">${y.roe}%</td>`;
-        } else {
-          h += `<td style="padding:6px 10px;text-align:center;color:#cbd5e1">—</td><td style="padding:6px 10px;text-align:center;color:#cbd5e1">—</td><td style="padding:6px 10px;text-align:center;color:#cbd5e1">—</td><td style="padding:6px 10px;text-align:center;color:#cbd5e1">—</td>`;
-        }
+  // Comparison table
+  h += `<div style="font-size:14px;font-weight:600;color:#1a1a2e;margin-bottom:12px">📊 关键指标对比</div>`;
+  h += `<div style="overflow-x:auto;margin-bottom:24px"><table style="width:100%;border-collapse:collapse;font-size:12px;min-width:600px">`;
+  h += `<tr style="background:#f0f4ff"><th style="padding:8px 10px;text-align:left;border-bottom:2px solid #dbe4ff">年份</th>`;
+  ready.forEach((s,i) => { h += `<th colspan="4" style="padding:8px 10px;text-align:center;border-bottom:2px solid #dbe4ff;color:${colors[i%colors.length]};font-weight:600">${s.data.company.name}</th>`; });
+  h += `</tr><tr style="background:#f8faff"><th style="padding:6px 10px;border-bottom:1px solid #e2e8f0"></th>`;
+  ready.forEach(() => { h += `<th style="padding:6px 10px;text-align:center;border-bottom:1px solid #e2e8f0;font-size:11px;color:#8899b0">净利率</th><th style="padding:6px 10px;text-align:center;border-bottom:1px solid #e2e8f0;font-size:11px;color:#8899b0">周转率</th><th style="padding:6px 10px;text-align:center;border-bottom:1px solid #e2e8f0;font-size:11px;color:#8899b0">杠杆</th><th style="padding:6px 10px;text-align:center;border-bottom:1px solid #e2e8f0;font-size:11px;color:#8899b0">ROE</th>`; });
+  h += `</tr>`;
+  for (const yr of common) {
+    h += `<tr style="border-bottom:1px solid #edf2f7"><td style="padding:6px 10px;font-weight:500">${yr}</td>`;
+    for (const s of ready) {
+      const y = s.data.years.find(vy => vy.year === yr);
+      if (y) {
+        const cls = y.roe > 15 ? 'color:#10b981;font-weight:600' : y.roe < 5 ? 'color:#ef4444;font-weight:600' : '';
+        h += `<td style="padding:6px 10px;text-align:center">${y.npm}%</td><td style="padding:6px 10px;text-align:center">${y.at}</td><td style="padding:6px 10px;text-align:center">${y.em}</td><td style="padding:6px 10px;text-align:center;${cls}">${y.roe}%</td>`;
+      } else {
+        h += `<td style="padding:6px 10px;text-align:center;color:#cbd5e1">—</td><td style="padding:6px 10px;text-align:center;color:#cbd5e1">—</td><td style="padding:6px 10px;text-align:center;color:#cbd5e1">—</td><td style="padding:6px 10px;text-align:center;color:#cbd5e1">—</td>`;
       }
-      h += `</tr>`;
     }
-    h += `</table></div>`;
+    h += `</tr>`;
+  }
+  h += `</table></div>`;
 
-    // Comparison charts
-    h += `<div style="display:grid;grid-template-columns:1fr 1fr;gap:20px">`;
-    if (roeUrl) h += `<div style="border:1px solid #edf2f7;border-radius:10px;padding:12px;background:#fafbfc"><div style="font-size:12px;color:#4a5568;margin-bottom:8px;font-weight:500">ROE 对比</div><img src="${roeUrl}" style="width:100%;display:block"></div>`;
-    if (npmUrl) h += `<div style="border:1px solid #edf2f7;border-radius:10px;padding:12px;background:#fafbfc"><div style="font-size:12px;color:#4a5568;margin-bottom:8px;font-weight:500">净利率对比</div><img src="${npmUrl}" style="width:100%;display:block"></div>`;
+  // Comparison charts
+  if (chartUrls) {
+    h += `<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">`;
+    const chartLabels = {roe:'ROE', npm:'净利率', at:'周转率', em:'杠杆'};
+    for (const [key, label] of Object.entries(chartLabels)) {
+      if (chartUrls[key]) {
+        h += `<div style="border:1px solid #edf2f7;border-radius:10px;padding:10px;background:#fafbfc"><div style="font-size:11px;color:#4a5568;margin-bottom:6px;font-weight:500">${label}对比</div><img src="${chartUrls[key]}" style="width:100%;display:block"></div>`;
+      }
+    }
     h += `</div>`;
+  }
 
-    h += `</div>${_cardFooter()}`;
-    const wrap = document.createElement('div'); wrap.style.cssText = 'position:fixed;left:-9999px;top:0;width:800px;background:#fff;font-family:-apple-system,sans-serif;z-index:-1'; wrap.innerHTML = h;
-    document.body.appendChild(wrap); _downloadCard(wrap, `多股对比`);
-  }, 150);
+  h += `</div>${_cardFooter()}`;
+  const wrap = document.createElement('div'); wrap.style.cssText = 'position:fixed;left:-9999px;top:0;width:800px;background:#fff;font-family:-apple-system,sans-serif;z-index:-1'; wrap.innerHTML = h;
+  document.body.appendChild(wrap); _downloadCard(wrap, `多股对比`);
 }
 
 function renderCompareTable(ready) {
