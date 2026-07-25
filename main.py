@@ -473,13 +473,14 @@ function renderAnalysis(d) {
 }
 
 // ── 估值指标推荐体系 ────────────────────────────────────────────
-// 四个核心指标：PE / PB / PS / PCF
+// 五个核心指标：PE / PB / PS / PCF / EV/EBITDA
 // 推荐级别：⭐⭐⭐ 最佳  ⭐⭐ 适用  ⭐ 可参考  — 不推荐
 const RATINGS = {
-  pe_ttm:     { label:'PE-TTM(市盈率)', desc:'股价 ÷ 每股收益。衡量每1元利润的市价。' },
-  pb:         { label:'PB(市净率)',     desc:'股价 ÷ 每股净资产。衡量净资产折溢价。' },
-  ps:         { label:'PS(市销率)',     desc:'总市值 ÷ 营业收入。衡量每1元营收的市价。' },
-  pcf:        { label:'PCF(市现率)',    desc:'股价 ÷ 每股经营现金流。衡量现金流质量。' },
+  pe_ttm:     { label:'PE-TTM(市盈率)',  desc:'股价 ÷ 每股收益。衡量每1元利润的市价。' },
+  pb:         { label:'PB(市净率)',      desc:'股价 ÷ 每股净资产。衡量净资产折溢价。' },
+  ps:         { label:'PS(市销率)',      desc:'总市值 ÷ 营业收入。衡量每1元营收的市价。' },
+  pcf:        { label:'PCF(市现率)',     desc:'股价 ÷ 每股经营现金流。衡量现金流质量。' },
+  ev_ebitda:  { label:'EV/EBITDA(企业价值倍数)', desc:'企业价值 ÷ 息税折旧摊销前利润。去杠杆的估值指标，适合跨公司比较。' },
 };
 // scoring: ⭐⭐⭐ = 3, ⭐⭐ = 2, ⭐ = 1, — = 0
 const PEG_RECOMMENDATIONS = {
@@ -488,36 +489,42 @@ const PEG_RECOMMENDATIONS = {
     pb:     { stars:1, rating:'⭐ 可参考', reason:'品牌企业净资产偏轻（无形资产权重），PB 通常偏高但意义有限。仅在破产清算或极端低估时参考。' },
     ps:     { stars:2, rating:'⭐⭐ 适用',  reason:'销售是品牌变现能力的源头，PS 可衡量品牌溢价是否转化为营收增长。若 PS 极高但利润不跟随，则品牌溢价未兑现。' },
     pcf:    { stars:3, rating:'⭐⭐⭐ 最佳', reason:'品牌企业现金流通常稳定且高于净利润（折旧低、无大量资本开支），PCF 比 PE 更真实反映盈利能力。现金不骗人。' },
+    ev_ebitda: { stars:2, rating:'⭐⭐ 适用', reason:'品牌企业折旧少、EBITDA 接近净利润，EV/EBITDA 可消除不同税率/资本结构的影响。适合跨市场跨行业品牌对标比较。' },
   },
   turnover: {
     pe_ttm: { stars:1, rating:'⭐ 可参考', reason:'周转型企业毛利率极低（如超市 1-3%），PE 对微小利润波动极度敏感，估值容易失真。' },
     pb:     { stars:2, rating:'⭐⭐ 适用',  reason:'重资产周转商的净资产（门店/仓储/物流）有一定参照意义，PB 可衡量资产折价空间。' },
     ps:     { stars:3, rating:'⭐⭐⭐ 最佳', reason:'周转型的核心逻辑是"薄利多销"——销售额才是规模能力的体现。PS 比 PE 更稳定，看营收增长看规模效应。' },
     pcf:    { stars:3, rating:'⭐⭐⭐ 最佳', reason:'周转型企业现金流周转快、库存周转产生大量经营现金流。PCF 反映真实的现金创造能力，是利润质量的最佳检验。' },
+    ev_ebitda: { stars:2, rating:'⭐⭐ 适用', reason:'周转型企业通常有大量折旧（仓储物流设备），EBITDA 去除了折旧差异，能更干净地看运营效率。EV/EBITDA 是零售业国际通用估值基准。' },
   },
   leverage: {
     pe_ttm: { stars:1, rating:'⭐ 可参考', reason:'金融/银行利润受拨备、利率政策影响大，PE 波动剧烈且容易产生假象（如坏账少时PE低）。' },
     pb:     { stars:3, rating:'⭐⭐⭐ 最佳', reason:'银行及金融机构净资产（贷款、投资资产）就是经营的原材料。PB≈1 是市场信任中性线，破净（PB<1）意味着市场对其资产质量有疑虑。' },
     ps:     { stars:1, rating:'⭐ 可参考', reason:'金融不是传统收入模式，PS 的"销售额"是净利息/手续费，不如直接看 PB。' },
     pcf:    { stars:2, rating:'⭐⭐ 适用',  reason:'金融机构经营现金流受存货、贷款拨备影响，但长期现金流充足说明风险可控。用于检验银行的收入质量真实。' },
+    ev_ebitda: { stars:2, rating:'⭐⭐ 适用', reason:'金融企业利息支出是经营成本而非融资成本，EV/EBITDA 在金融业需结合 PB 使用。适合比较不同杠杆率的金融机构。' },
   },
   network: {
     pe_ttm: { stars:3, rating:'⭐⭐⭐ 最佳', reason:'网络平台进入利润兑现期（如美团/京东转盈），高利润说明平台垄断价值。PE 是海外对标基准的核心指标。' },
     pb:     { stars:1, rating:'⭐ 可参考', reason:'平台资产偏轻（知识产权/工作站），PB 严重偏高。但在极端下跌时（如政策恐慌）PB 可作底部参照。' },
     ps:     { stars:2, rating:'⭐⭐ 适用',  reason:'若平台仍在投资期（利润为负或微利），PS 是主要的估值锚。PS 低反映市场认为营收可能见顶。' },
     pcf:    { stars:2, rating:'⭐⭐ 适用',  reason:'平台企业一旦盈利，现金流快速增长。PCF 是利润质量的检测工具——利润高但现金流差，是危险的信号。' },
+    ev_ebitda: { stars:1, rating:'⭐ 可参考', reason:'平台企业折旧少、股权激励多，EBITDA 可能高估真实盈利。EV/EBITDA 可作为 PE 的补充，但优先级较靠后。' },
   },
   cyclical: {
     pe_ttm: { stars:0, rating:'— 慎用',   reason:'周期行业的利润随景气波动剧烈。景气高峰时 PE 极低（看起来便宜），景气低谷时 PE 极高（甚至为负），PE 会给出完全相反的信号。' },
     pb:     { stars:3, rating:'⭐⭐⭐ 最佳', reason:'周期企业重资产为主（厂矿、设备、里矿山），PB 相对稳定不随利润大幅波动。PB<1 时是行业底部的典型标志，PB 高表示景气高峰。' },
     ps:     { stars:2, rating:'⭐⭐ 适用',  reason:'周期低谷时利润可能为负，此时 PS 是唯一有意义的收入估值。但周期品售价波动影响 PS，稳定性次于 PB。' },
     pcf:    { stars:1, rating:'⭐ 可参考', reason:'周期企业现金流和利润同向波动，但现金更领先利润。PCF 低谷回升往往先于利润见底，可作景气拐点领先信号。' },
+    ev_ebitda: { stars:1, rating:'⭐ 可参考', reason:'周期企业的 EBITDA 相对 PE 更稳定（去除了折旧波动），但仍受价格周期影响。EV/EBITDA 在景气低谷高于同行时可作底部信号参考。' },
   },
   lossmaking: {
     pe_ttm: { stars:0, rating:'— 不适用', reason:'亏损企业无正利润，PE 为负，没有任何估值意义。' },
     pb:     { stars:1, rating:'⭐ 可参考', reason:'亏损企业资产规模还有残值，净资产有限度有限。PB 低于0.5 以下才值得关注。' },
     ps:     { stars:3, rating:'⭐⭐⭐ 最佳', reason:'亏损阶段唯一有正向意义的指标——销售额证明市场需求真实。PS 越低，市场给每1元营收赋，越安全。' },
     pcf:    { stars:2, rating:'⭐⭐ 适用',  reason:'现金流比利润更可靠——亏损可能是折旧/GW减值造成的，但经营现金流为正是好信号。PCF 负，则经营在"烧钱"。' },
+    ev_ebitda: { stars:1, rating:'⭐ 可参考', reason:'亏损企业的 EBITDA 可能仍为正（EBITDA 去除了折旧和摊销），可作为"接近利润"的替代指标。但需注意亏损根源——若 EBITDA 也很低或为负，说明经营面恶化。' },
   },
 };
 
@@ -553,7 +560,7 @@ function loadPeg(code, market) {
   const revVal = latest.revenue.toFixed(2);
 
   // Sort metrics by stars descending
-  const metricKeys = ['pe_ttm','pb','ps','pcf'];
+  const metricKeys = ['pe_ttm','pb','ps','pcf','ev_ebitda'];
   const sorted = metricKeys.map(k => ({key:k, ...RATINGS[k], ...rec[k]})).sort((a,b) => b.stars - a.stars);
 
   const starColors = {3:'#10b981', 2:'#f59e0b', 1:'#8899b0', 0:'#dc2626'};
@@ -604,7 +611,7 @@ function loadPeg(code, market) {
         <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;flex-wrap:wrap">
           <span style="font-weight:600;font-size:14px;color:#1a1a2e">💹 估值计算器</span>
           ${analysis.model ? `<span style="background:#eef2ff;color:#4a6cf7;border-radius:6px;padding:3px 10px;font-size:11px;font-weight:500">🏗️ ${analysis.model.label||'通用'}</span>` : ''}
-          <span style="font-size:11px;color:#8899b0">指标按该企业商业模式适配度排序，⭐越多越适合</span>
+          <span style="font-size:11px;color:#8899b0">五大指标按该企业商业模式适配度排序，⭐越多越适合</span>
         </div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:10px">
           ${sorted.map((m, i) => metricCard(m, i)).join('')}
@@ -634,6 +641,8 @@ function calcMetric(code, metricKey) {
   const profitCagr3 = calcCagr(netProfits, 3);
   const revCagr3    = calcCagr(revenues, 3);
   const avgRoe = years.reduce((a,y)=>a+y.roe,0) / years.length;
+  const analysis = s.data.analysis || {};
+  const model = (analysis.model && analysis.model.model) || 'brand';
 
   let lines = [];
 
@@ -704,6 +713,25 @@ function calcMetric(code, metricKey) {
       lines.push(`PCF/CAGR = ${val.toFixed(1)} ÷ ${profitCagr3.toFixed(1)}% = <strong>${pcfg.toFixed(2)}</strong> <span style="font-size:11px;color:#8899b0">（类PEG，衡量现金流的成长定价）</span>`);
     }
     lines.push(`<span style="font-size:11px;color:#8899b0">参考：利润CAGR(3y) ${profitCagr3!==null?profitCagr3.toFixed(1)+'%':'—'} · 净利润 ${latest.net_profit.toFixed(2)}亿</span>`);
+
+  } else if (metricKey === 'ev_ebitda') {
+    lines.push(`<strong>📊 EV/EBITDA = ${val.toFixed(1)}x</strong>`);
+    lines.push(`<span style="font-size:12px;color:#6b7280">原理：EV/EBITDA 去除资本结构和折旧差异，反映企业整体经营价值的倍数。EV/EBITDA < 10x 通常偏低，10-15x 合理，>15x 偏贵（因行业差异较大，需对比同业）。比 PE 更稳定，适合跨市场/跨公司比较。</span>`);
+    if (profitCagr3 !== null && profitCagr3 > 0) {
+      const evGrowth = val / profitCagr3;
+      lines.push(`EV/EBITDA ÷ 利润CAGR = ${val.toFixed(1)} ÷ ${profitCagr3.toFixed(1)}% = <strong>${evGrowth.toFixed(2)}</strong> <span style="font-size:11px;color:#8899b0">（类PEG，衡量企业价值相对成长性的定价）</span>`);
+      if (evGrowth < 0.5) lines.push(`<span style="color:#10b981;font-weight:600">🟢 EV/EBITDA 相对成长性较低，估值有吸引力</span>`);
+      else if (evGrowth <= 1.0) lines.push(`<span style="color:#f59e0b;font-weight:600">🟡 EV/EBITDA 与成长性基本匹配</span>`);
+      else lines.push(`<span style="color:#ef4444;font-weight:600">🔴 EV/EBITDA 相对成长性偏高，需确认成长能否持续</span>`);
+    }
+    // 对比 PE
+    lines.push(`<span style="font-size:11px;color:#4a5568">💡 对比PE：若 EV/EBITDA 显著低于 PE，说明公司折旧/摊销/财务费用高（重资产特征）；若EV/EBITDA > PE，说明非经营收入占比大或现金充裕。</span>`);
+    // 行业区间参考
+    const secRanges = {'brand':'10-18x', 'turnover':'6-12x', 'leverage':'8-15x', 'network':'12-25x', 'cyclical':'5-10x', 'lossmaking':'8-15x'};
+    const modelLabels = {'brand':'品牌型', 'turnover':'周转型', 'leverage':'杠杆型', 'network':'平台型', 'cyclical':'周期型', 'lossmaking':'亏损型'};
+    const secRange = secRanges[model] || '8-15x';
+    const modelLabel = (analysis.model && analysis.model.label) || modelLabels[model] || model;
+    lines.push(`<span style="font-size:11px;color:#8899b0">行业参考：${modelLabel} 通常 EV/EBITDA 在 ${secRange} 区间 · 利润CAGR(3y) ${profitCagr3!==null?profitCagr3.toFixed(1)+'%':'—'}</span>`);
   }
 
   resultDiv.innerHTML = `<div style="padding:10px 14px;background:#fff;border-radius:8px;border:1px solid #edf2f7;font-size:13px;color:#1a1a2e;line-height:1.8">${lines.join('<br>')}</div>`;
@@ -719,7 +747,7 @@ function calcCagr(vals, yearsBack) {
 }
 
 function renderPegButton(code, market) {
-  return `<button onclick="loadPeg('${code}','${market}')" style="display:inline-flex;align-items:center;gap:6px;margin-top:10px;background:linear-gradient(135deg,#4a6cf7,#6d8aff);color:#fff;border:none;border-radius:8px;padding:10px 18px;font-size:13px;font-weight:600;cursor:pointer;box-shadow:0 2px 8px rgba(74,108,247,.25);transition:all .2s" onmouseover="this.style.transform='translateY(-1px)';this.style.boxShadow='0 4px 12px rgba(74,108,247,.35)'" onmouseout="this.style.transform='';this.style.boxShadow='0 2px 8px rgba(74,108,247,.25)'">💹 估值参考 <span style="font-size:10px;font-weight:400;opacity:.85"> 四维计算器</span></button>`;
+  return `<button onclick="loadPeg('${code}','${market}')" style="display:inline-flex;align-items:center;gap:6px;margin-top:10px;background:linear-gradient(135deg,#4a6cf7,#6d8aff);color:#fff;border:none;border-radius:8px;padding:10px 18px;font-size:13px;font-weight:600;cursor:pointer;box-shadow:0 2px 8px rgba(74,108,247,.25);transition:all .2s" onmouseover="this.style.transform='translateY(-1px)';this.style.boxShadow='0 4px 12px rgba(74,108,247,.35)'" onmouseout="this.style.transform='';this.style.boxShadow='0 2px 8px rgba(74,108,247,.25)'">💹 估值参考 <span style="font-size:10px;font-weight:400;opacity:.85"> 五大指标</span></button>`;
 }
 
 // ── single stock view ──────────────────────────────────────────
