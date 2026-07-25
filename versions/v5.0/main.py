@@ -10,7 +10,7 @@ import uvicorn
 
 from analyzer import fetch, detect_market, search_stocks, result_to_dict, CACHE_DIR
 
-app = FastAPI(title="杜邦分析 v6.0")
+app = FastAPI(title="杜邦分析 v5.0")
 executor = ThreadPoolExecutor(max_workers=4)
 
 @app.get("/api/cache-clear")
@@ -73,11 +73,11 @@ async def api_compare(codes: str = Query(description="Comma separated: JD,BABA,A
 
 @app.get("/api/valuation")
 async def api_valuation(code: str = Query(), market: str = Query(default=None)):
-    """获取实时估值指标：PE, PB, PS, PCF, EV/EBITDA（腾讯行情 + 财务数据衍生计算）"""
+    """获取实时估值指标：PE, PB, PS, PCF, 市值（腾讯行情，支持A/HK/US）"""
     import urllib.request
     m = market or detect_market(code)
     clean = code.upper().replace('.HK','').replace('.SH','').replace('.SZ','').replace('.BJ','')
-    result = {"pe": None, "pb": None, "ps": None, "pcf": None, "ev": None, "ebitda": None, "ev_ebitda": None, "market_cap": None}
+    result = {"pe": None, "pb": None, "ps": None, "pcf": None, "market_cap": None}
     try:
         prefix = f'hk{clean}' if m == 'hk' else f'us{clean}' if m == 'us' else f'sh{clean}' if clean.startswith('6') else f'sz{clean}'
         url = f'http://qt.gtimg.cn/q={prefix}'
@@ -96,30 +96,9 @@ async def api_valuation(code: str = Query(), market: str = Query(default=None)):
                 pb = f(parts[72]) if len(parts) > 72 else None
             else:
                 pb = f(parts[46]) if len(parts) > 46 else None
-            if mc:
-                mc = mc * 1e8
-            result = {"pe": pe, "pb": pb, "ps": None, "pcf": None, "ev": None, "ebitda": None, "ev_ebitda": None, "market_cap": mc}
-            # Compute derived metrics from cached DuPont financial data
-            loop = asyncio.get_running_loop()
-            dupont_res = await loop.run_in_executor(executor, fetch, code, m)
-            if dupont_res and dupont_res.years:
-                y = dupont_res.years[-1]
-                rev = y.revenue
-                if rev and rev > 0 and mc:
-                    result['ps'] = mc / rev
-                ocf = y.operating_cash_flow
-                if ocf and ocf > 0 and mc:
-                    result['pcf'] = mc / ocf
-                debt = y.total_debt or 0
-                cash = y.cash_equivalents or 0
-                op = y.operating_profit or 0
-                da = y.depreciation_amortization or 0
-                ev = mc + debt - cash
-                ebitda_val = op + da
-                result['ev'] = ev
-                result['ebitda'] = ebitda_val
-                if ebitda_val > 0:
-                    result['ev_ebitda'] = ev / ebitda_val
+            if m == 'us' and mc: mc = mc * 1e8
+            elif m in ('a', 'hk') and mc: mc = mc * 1e8
+            result = {"pe": pe, "pb": pb, "ps": None, "pcf": None, "market_cap": mc}
     except Exception:
         pass
     return result
@@ -130,7 +109,7 @@ HTML = r"""<!DOCTYPE html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>杜邦分析 v6.0</title>
+<title>杜邦分析 v4.5</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
 <style>
 *{margin:0;padding:0;box-sizing:border-box;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif}
@@ -220,7 +199,7 @@ tr:hover td{background:#f8fafc}
 <body>
 
 <div class="header">
-  <h1>杜邦分析 <span style="font-size:11px;color:#8899b0;font-weight:400">v6.0</span></h1>
+  <h1>杜邦分析 <span style="font-size:11px;color:#8899b0;font-weight:400">v5.0</span></h1>
   <p>基于公开财报数据的杜邦分解（支持美股/港股/A股）</p>
 </div>
 
@@ -232,8 +211,9 @@ tr:hover td{background:#f8fafc}
         <input id="stockInput" type="text" placeholder="输入股票代码或名称，如 JD / 京东 / 00700 / 600519" onkeydown="if(event.key==='Enter') addStock()">
         <button class="btn btn-primary" onclick="addStock()">添加</button>
         <div style="display:flex;gap:8px">
-          <button class="btn btn-sm btn-outline" onclick="toggleExpandAll()" data-action="toggle-expand">⬇ 展开全部</button>
-          <button class="btn btn-sm btn-outline" onclick="copySummary()">📄 复制摘要</button>
+          <button class="btn btn-sm btn-outline" data-code="JD,PDD,BABA,AMZN" onclick="quickCompare(this)">电商对比</button>
+          <button class="btn btn-sm btn-outline" data-code="600519.SH,000858.SZ,000568.SZ" onclick="quickCompare(this)">白酒对比</button>
+          <button class="btn btn-sm btn-outline" data-code="00700.HK,03690.HK,09988.HK" onclick="quickCompare(this)">港股科技</button>
         </div>
       </div>
       <div class="stock-tags" id="stockTags"></div>
@@ -385,6 +365,15 @@ const EMPTY_HTML = `<div class="card"><div class="card-body" style="text-align:c
   </div>
 </div></div>`;
 
+async function quickCompare(btn) {
+  const codes = btn.dataset.code.split(',');
+  for (const c of codes) {
+    if (!stocks.some(s => s.code.toUpperCase() === c.toUpperCase())) {
+      await addStock(c);
+    }
+  }
+}
+
 let activeIdx = -1;
 
 function selectStock(idx) {
@@ -422,10 +411,6 @@ function _appendStockCard(s) {
   const div = document.createElement('div');
   div.id = s.cardId;
   div.innerHTML = _buildStockCard(s);
-  // apply current expand/collapse state to new card
-  if (!rowsExpanded) {
-    div.querySelectorAll('.metric-input-row').forEach(el => el.style.display = 'none');
-  }
   // hide all existing views, then append
   wrap.querySelectorAll('[id^="sc-"]').forEach(el => el.style.display = 'none');
   wrap.appendChild(div);
@@ -835,7 +820,7 @@ function loadPeg(code, market) {
         <div style="font-size:12px;color:#4a5568;line-height:1.7;padding:6px 10px;background:rgba(255,255,255,.7);border-radius:6px;margin-bottom:10px">
           <strong>原理：</strong>${m.reason}
         </div>
-        <div class="metric-input-row" style="display:flex;gap:6px;align-items:center">
+        <div style="display:flex;gap:6px;align-items:center">
           <button onclick="fetchSingleMetric(event,'${code}','${m.key}','${s.market}')" title="从网络获取实时 ${m.label}" style="background:#10b981;color:#fff;border:none;border-radius:6px;padding:7px 10px;font-size:11px;font-weight:600;cursor:pointer;white-space:nowrap" id="fetchBtn-${code}-${m.key}">获取</button>
           <input id="pegVal-${code}-${m.key}" type="number" step="0.01" placeholder="输入 ${m.label.split('(')[0]}" style="flex:1;padding:7px 10px;border:1px solid #d1d9e6;border-radius:6px;font-size:13px;outline:none" onkeydown="if(event.key==='Enter')calcMetric('${code}','${m.key}')">
           <button onclick="calcMetric('${code}','${m.key}')" style="background:#4a6cf7;color:#fff;border:none;border-radius:6px;padding:7px 14px;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap">计算</button>
@@ -871,10 +856,6 @@ function loadPeg(code, market) {
           <span style="font-weight:600;font-size:14px;color:#1a1a2e">💹 估值计算器</span>
           ${analysis.model ? `<span style="background:#eef2ff;color:#4a6cf7;border-radius:6px;padding:3px 10px;font-size:11px;font-weight:500">🏗️ ${analysis.model.label||'通用'}</span>` : ''}
           <span style="font-size:11px;color:#8899b0">五大指标按该企业商业模式适配度排序，⭐越多越适合</span>
-        </div>
-        <div style="margin-bottom:10px">
-          <button onclick="fetchAllMetrics('${code}','${s.market}')" style="background:#4a6cf7;color:#fff;border:none;border-radius:6px;padding:6px 14px;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap">💹 全部获取</button>
-          <span style="font-size:11px;color:#8899b0;margin-left:8px">一次获取5个估值指标</span>
         </div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:10px">
           ${sorted.map((m, i) => metricCard(m, i)).join('')}
@@ -1009,72 +990,8 @@ function calcCagr(vals, yearsBack) {
   return (Math.pow(end / start, 1.0 / yearsBack) - 1) * 100;
 }
 
-const METRIC_API_KEY = {pe_ttm:'pe', pb:'pb', ps:'ps', pcf:'pcf', ev_ebitda:'ev_ebitda'};
+const METRIC_API_KEY = {pe_ttm:'pe', pb:'pb', ps:'ps', pcf:'pcf', ev_ebitda:null};
 const METRIC_LABEL = {pe_ttm:'PE', pb:'PB', ps:'PS', pcf:'PCF', ev_ebitda:'EV/EBITDA'};
-
-let rowsExpanded = true;
-
-function toggleExpandAll() {
-  rowsExpanded = !rowsExpanded;
-  const els = document.querySelectorAll('.metric-input-row');
-  els.forEach(el => el.style.display = rowsExpanded ? 'flex' : 'none');
-  const btn = document.querySelector('[data-action="toggle-expand"]');
-  if (btn) btn.textContent = rowsExpanded ? '⬆ 收起全部' : '⬇ 展开全部';
-}
-
-function copySummary() {
-  const s = stocks[activeIdx];
-  if (!s || !s.data) { alert('暂无数据'); return; }
-  const d = s.data;
-  const n = d.company.name;
-  const c = s.code;
-  const yrs = d.years;
-  const last = yrs[yrs.length - 1];
-  const cagr3 = calcCagr(yrs.map(y => ({np: y.net_profit * 1e8})), 3);
-  const revCagr3 = calcCagr(yrs.map(y => ({np: y.revenue * 1e8})), 3);
-  const avgRoe = yrs.reduce((a, y) => a + y.roe, 0) / yrs.length;
-  const roes = yrs.map(y => ({year: y.year, roe: y.roe}));
-  const best = roes.reduce((a, b) => a.roe > b.roe ? a : b);
-  const worst = roes.reduce((a, b) => a.roe < b.roe ? a : b);
-  const lines = [
-    `${n}(${c}) — 杜邦分析摘要`,
-    `ROE: ${last.roe}% | 净利率: ${last.npm}% | 周转率: ${last.at} | 杠杆: ${last.em}`,
-    `利润 CAGR(3Y): ${cagr3 !== null ? cagr3.toFixed(1) + '%' : '—'} | 营收 CAGR(3Y): ${revCagr3 !== null ? revCagr3.toFixed(1) + '%' : '—'}`,
-    `最优年份: ${best.year}年 ROE ${best.roe}%`,
-    `最差年份: ${worst.year}年 ROE ${worst.roe}%`,
-  ];
-  navigator.clipboard.writeText(lines.join('\n')).then(() => {
-    const btn = document.querySelector('[onclick="copySummary()"]');
-    if (btn) { const t = btn.textContent; btn.textContent = '✅ 已复制'; setTimeout(() => btn.textContent = t, 1500); }
-  }).catch(() => alert('复制失败，请手动复制'));
-}
-
-async function fetchAllMetrics(code, market) {
-  try {
-    const resp = await fetch(`/api/valuation?code=${encodeURIComponent(code)}&market=${encodeURIComponent(market)}`);
-    if (!resp.ok) throw new Error('请求失败');
-    const data = await resp.json();
-    for (const [key, apiKey] of Object.entries(METRIC_API_KEY)) {
-      const val = data[apiKey];
-      const inp = document.getElementById(`pegVal-${code}-${key}`);
-      if (inp && val !== null && val !== undefined) {
-        inp.value = val.toFixed(2);
-      }
-      const btn = document.getElementById(`fetchBtn-${code}-${key}`);
-      if (btn && val !== null && val !== undefined) {
-        btn.textContent = '✓ ' + METRIC_LABEL[key];
-        btn.style.background = '#059669';
-        btn.dataset.fetched = '1';
-        btn.style.cursor = 'default';
-      } else if (btn) {
-        btn.textContent = '⚠️ 无数据';
-        btn.style.background = '#f59e0b';
-      }
-    }
-  } catch(e) {
-    alert('获取估值失败: ' + e.message);
-  }
-}
 
 async function fetchSingleMetric(ev, code, metricKey, market) {
   const btn = ev.target;
