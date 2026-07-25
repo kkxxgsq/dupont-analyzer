@@ -232,8 +232,8 @@ tr:hover td{background:#f8fafc}
         <input id="stockInput" type="text" placeholder="输入股票代码或名称，如 JD / 京东 / 00700 / 600519" onkeydown="if(event.key==='Enter') addStock()">
         <button class="btn btn-primary" onclick="addStock()">添加</button>
         <div style="display:flex;gap:8px">
-          <button class="btn btn-sm btn-outline" onclick="toggleExpandAll()" data-action="toggle-expand">⬇ 展开全部</button>
-          <button class="btn btn-sm btn-outline" onclick="copySummary()">📄 复制摘要</button>
+          <button class="btn btn-sm btn-outline" onclick="exportText()">📄 文字</button>
+          <button class="btn btn-sm btn-outline" onclick="exportImage()">🖼️ 卡片</button>
         </div>
       </div>
       <div class="stock-tags" id="stockTags"></div>
@@ -422,10 +422,6 @@ function _appendStockCard(s) {
   const div = document.createElement('div');
   div.id = s.cardId;
   div.innerHTML = _buildStockCard(s);
-  // apply current expand/collapse state to new card
-  if (!rowsExpanded) {
-    div.querySelectorAll('.metric-input-row').forEach(el => el.style.display = 'none');
-  }
   // hide all existing views, then append
   wrap.querySelectorAll('[id^="sc-"]').forEach(el => el.style.display = 'none');
   wrap.appendChild(div);
@@ -835,7 +831,7 @@ function loadPeg(code, market) {
         <div style="font-size:12px;color:#4a5568;line-height:1.7;padding:6px 10px;background:rgba(255,255,255,.7);border-radius:6px;margin-bottom:10px">
           <strong>原理：</strong>${m.reason}
         </div>
-        <div class="metric-input-row" style="display:flex;gap:6px;align-items:center">
+        <div style="display:flex;gap:6px;align-items:center">
           <button onclick="fetchSingleMetric(event,'${code}','${m.key}','${s.market}')" title="从网络获取实时 ${m.label}" style="background:#10b981;color:#fff;border:none;border-radius:6px;padding:7px 10px;font-size:11px;font-weight:600;cursor:pointer;white-space:nowrap" id="fetchBtn-${code}-${m.key}">获取</button>
           <input id="pegVal-${code}-${m.key}" type="number" step="0.01" placeholder="输入 ${m.label.split('(')[0]}" style="flex:1;padding:7px 10px;border:1px solid #d1d9e6;border-radius:6px;font-size:13px;outline:none" onkeydown="if(event.key==='Enter')calcMetric('${code}','${m.key}')">
           <button onclick="calcMetric('${code}','${m.key}')" style="background:#4a6cf7;color:#fff;border:none;border-radius:6px;padding:7px 14px;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap">计算</button>
@@ -1012,41 +1008,262 @@ function calcCagr(vals, yearsBack) {
 const METRIC_API_KEY = {pe_ttm:'pe', pb:'pb', ps:'ps', pcf:'pcf', ev_ebitda:'ev_ebitda'};
 const METRIC_LABEL = {pe_ttm:'PE', pb:'PB', ps:'PS', pcf:'PCF', ev_ebitda:'EV/EBITDA'};
 
-let rowsExpanded = true;
-
-function toggleExpandAll() {
-  rowsExpanded = !rowsExpanded;
-  const els = document.querySelectorAll('.metric-input-row');
-  els.forEach(el => el.style.display = rowsExpanded ? 'flex' : 'none');
-  const btn = document.querySelector('[data-action="toggle-expand"]');
-  if (btn) btn.textContent = rowsExpanded ? '⬆ 收起全部' : '⬇ 展开全部';
-}
-
-function copySummary() {
+function exportText() {
   const s = stocks[activeIdx];
   if (!s || !s.data) { alert('暂无数据'); return; }
   const d = s.data;
   const n = d.company.name;
-  const c = s.code;
+  const c = d.company.code;
   const yrs = d.years;
   const last = yrs[yrs.length - 1];
   const cagr3 = calcCagr(yrs.map(y => ({np: y.net_profit * 1e8})), 3);
+  const cagr5 = calcCagr(yrs.map(y => ({np: y.net_profit * 1e8})), 5);
   const revCagr3 = calcCagr(yrs.map(y => ({np: y.revenue * 1e8})), 3);
+  const revCagr5 = calcCagr(yrs.map(y => ({np: y.revenue * 1e8})), 5);
   const avgRoe = yrs.reduce((a, y) => a + y.roe, 0) / yrs.length;
   const roes = yrs.map(y => ({year: y.year, roe: y.roe}));
   const best = roes.reduce((a, b) => a.roe > b.roe ? a : b);
   const worst = roes.reduce((a, b) => a.roe < b.roe ? a : b);
-  const lines = [
-    `${n}(${c}) — 杜邦分析摘要`,
-    `ROE: ${last.roe}% | 净利率: ${last.npm}% | 周转率: ${last.at} | 杠杆: ${last.em}`,
-    `利润 CAGR(3Y): ${cagr3 !== null ? cagr3.toFixed(1) + '%' : '—'} | 营收 CAGR(3Y): ${revCagr3 !== null ? revCagr3.toFixed(1) + '%' : '—'}`,
-    `最优年份: ${best.year}年 ROE ${best.roe}%`,
-    `最差年份: ${worst.year}年 ROE ${worst.roe}%`,
-  ];
-  navigator.clipboard.writeText(lines.join('\n')).then(() => {
-    const btn = document.querySelector('[onclick="copySummary()"]');
+  const p = d.profile || {};
+  const a = d.analysis || {};
+  const m = a.model || {};
+  const modelLabels = {brand:'品牌溢价型', turnover:'资产周转型', network:'网络平台型', leverage:'杠杆经营型', cyclical:'强周期型', lossmaking:'亏损型'};
+  const lastNp = (last.net_profit * 1e8).toFixed(1);
+  const lastRev = (last.revenue * 1e8).toFixed(1);
+
+  let txt = `📊 ${n}（${c}）— 杜邦分析\n`;
+  txt += `━━━━━━━━━━━━━━━━\n\n`;
+
+  txt += `🏷️ 行业：${p.industry || '—'} ｜ 市场：${s.market.toUpperCase()}\n\n`;
+
+  if (p.desc) txt += `📝 ${p.desc}\n\n`;
+  if (p.biz) txt += `🔹 主营：${p.biz}\n`;
+  if (p.moat) txt += `🔹 护城河：${p.moat}\n`;
+  if (p.cycle) txt += `🔹 周期属性：${p.cycle}\n`;
+  txt += '\n';
+
+  txt += `📈 当前估值参考\n`;
+  txt += `最新净利润：${lastNp}亿 ｜ 最新营收：${lastRev}亿\n`;
+  txt += `利润 CAGR(3Y)：${cagr3 !== null ? cagr3.toFixed(1) + '%' : '—'} ｜ 利润 CAGR(5Y)：${cagr5 !== null ? cagr5.toFixed(1) + '%' : '—'}\n`;
+  txt += `营收 CAGR(3Y)：${revCagr3 !== null ? revCagr3.toFixed(1) + '%' : '—'} ｜ 营收 CAGR(5Y)：${revCagr5 !== null ? revCagr5.toFixed(1) + '%' : '—'}\n`;
+  txt += `年均 ROE：${avgRoe.toFixed(1)}%\n\n`;
+
+  txt += `📅 历年杜邦分解\n`;
+  for (const y of yrs) {
+    txt += `▸ ${y.year}年｜营收${(y.revenue*1e8).toFixed(1)}亿｜净利${(y.net_profit*1e8).toFixed(1)}亿｜净利率${y.npm}%｜周转${y.at}｜杠杆${y.em}｜ROE ${y.roe}%\n`;
+  }
+  txt += '\n';
+
+  txt += `🏆 最优：${best.year}年 ROE ${best.roe}%（净利率${best.npm}%，周转率${best.at}，杠杆${best.em}）\n`;
+  txt += `⚠️ 最差：${worst.year}年 ROE ${worst.roe}%（净利率${worst.npm}%，周转率${worst.at}，杠杆${worst.em}）\n\n`;
+
+  if (m.model) {
+    txt += `🏗️ 商业模式：${modelLabels[m.model] || m.model}\n`;
+    if (m.desc) txt += `${m.desc}\n`;
+    if (a.summary) txt += `${a.summary}\n\n`;
+  }
+
+  const cautions = d.cautions || [];
+  if (cautions.length) {
+    txt += `🔔 警惕年份\n`;
+    for (const c of cautions) {
+      txt += `▸ ${c.year}年（ROE ${c.roe}%）— ${c.reasons.join('；')}\n`;
+    }
+    txt += '\n';
+  }
+
+  if (a.advice) txt += `💡 选股建议：${a.advice}\n\n`;
+
+  const metricKeys = ['pe_ttm','pb','ps','pcf','ev_ebitda'];
+  const inputVals = metricKeys.map(k => {
+    const inp = document.getElementById(`pegVal-${s.code}-${k}`);
+    const res = document.getElementById(`pegResult-${s.code}-${k}`);
+    return {key: k, val: inp?.value, result: res?.innerText || ''};
+  }).filter(x => x.val);
+  if (inputVals.length) {
+    txt += `💹 估值计算\n`;
+    for (const x of inputVals) {
+      txt += `▸ ${METRIC_LABEL[x.key]}：${x.val} ${x.result ? x.result.replace(/<[^>]*>/g, '') : ''}\n`;
+    }
+    txt += '\n';
+  }
+
+  txt += `━━━━━━━━━━━━━━━━\n`;
+  txt += `📎 由 杜邦分析 v6.0 生成`;
+
+  navigator.clipboard.writeText(txt).then(() => {
+    const btn = document.querySelector('[onclick="exportText()"]');
     if (btn) { const t = btn.textContent; btn.textContent = '✅ 已复制'; setTimeout(() => btn.textContent = t, 1500); }
   }).catch(() => alert('复制失败，请手动复制'));
+}
+
+function exportImage() {
+  const s = stocks[activeIdx];
+  if (!s || !s.data) { alert('暂无数据'); return; }
+  const d = s.data;
+  const n = d.company.name;
+  const c = d.company.code;
+  const yrs = d.years;
+  const last = yrs[yrs.length - 1];
+  const cagr3 = calcCagr(yrs.map(y => ({np: y.net_profit * 1e8})), 3);
+  const avgRoe = yrs.reduce((a, y) => a + y.roe, 0) / yrs.length;
+  const roes = yrs.map(y => ({year: y.year, roe: y.roe}));
+  const best = roes.reduce((a, b) => a.roe > b.roe ? a : b);
+  const worst = roes.reduce((a, b) => a.roe < b.roe ? a : b);
+  const p = d.profile || {};
+  const a = d.analysis || {};
+  const m = a.model || {};
+  const modelLabels = {brand:'品牌溢价型', turnover:'资产周转型', network:'网络平台型', leverage:'杠杆经营型', cyclical:'强周期型', lossmaking:'亏损型'};
+
+  // capture chart canvases as images
+  let chartRoeUrl = '', chartNpmUrl = '', chartAtUrl = '', chartEmUrl = '';
+  const cid = s.cardId;
+  const chartEls = [
+    {id: `chartRoe-${cid}`, set: v => chartRoeUrl = v},
+    {id: `chartNpm-${cid}`, set: v => chartNpmUrl = v},
+    {id: `chartAt-${cid}`, set: v => chartAtUrl = v},
+    {id: `chartEm-${cid}`, set: v => chartEmUrl = v},
+  ];
+  for (const ce of chartEls) {
+    const c = document.getElementById(ce.id);
+    if (c) ce.set(c.toDataURL('image/png'));
+  }
+
+  // build off-screen card
+  const wrap = document.createElement('div');
+  wrap.style.cssText = 'position:fixed;left:-9999px;top:0;width:800px;background:#fff;font-family:-apple-system,sans-serif;padding:0;z-index:-1';
+  wrap.innerHTML = buildExportCard();
+  document.body.appendChild(wrap);
+
+  // load html2canvas lazily
+  const loadH2C = () => new Promise((resolve, reject) => {
+    if (window.html2canvas) return resolve();
+    const sc = document.createElement('script');
+    sc.src = 'https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js';
+    sc.onload = resolve;
+    sc.onerror = reject;
+    document.head.appendChild(sc);
+  });
+
+  loadH2C().then(() => {
+    html2canvas(wrap, {scale:2, useCORS:true, backgroundColor:'#fff'}).then(canvas => {
+      canvas.toBlob(blob => {
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `${c}_杜邦分析卡片.png`;
+        a.click();
+        URL.revokeObjectURL(url);
+      });
+      document.body.removeChild(wrap);
+      const btn = document.querySelector('[onclick="exportImage()"]');
+      if (btn) { const t = btn.textContent; btn.textContent = '✅ 已下载'; setTimeout(() => btn.textContent = t, 2000); }
+    }).catch(e => { document.body.removeChild(wrap); alert('生成图片失败: ' + e.message); });
+  }).catch(() => { document.body.removeChild(wrap); alert('加载渲染库失败，请检查网络'); });
+
+  function buildExportCard() {
+    const mkVal = (v) => v !== null && v !== undefined ? v : '—';
+    const lastNp = (last.net_profit * 1e8).toFixed(1);
+    const lastRev = (last.revenue * 1e8).toFixed(1);
+    const metricKeys = ['pe_ttm','pb','ps','pcf','ev_ebitda'];
+    const inputVals = metricKeys.map(k => {
+      const inp = document.getElementById(`pegVal-${s.code}-${k}`);
+      return {key: k, val: inp?.value};
+    }).filter(x => x.val);
+
+    let h = '';
+    // header
+    h += `<div style="background:linear-gradient(135deg,#1a1a2e,#16213e);color:#fff;padding:28px 36px;border-radius:0">`;
+    h += `<div style="font-size:24px;font-weight:700">${n}</div>`;
+    h += `<div style="font-size:13px;color:#8899b0;margin-top:6px">${c} ｜ ${s.market.toUpperCase()} ｜ ${p.industry || ''}</div>`;
+    h += `</div>`;
+
+    // key metrics snapshot
+    h += `<div style="padding:20px 36px">`;
+    h += `<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px">`;
+    h += `<div style="background:#f0f4ff;border-radius:8px;padding:14px;text-align:center"><div style="font-size:11px;color:#8899b0">最新ROE</div><div style="font-size:22px;font-weight:700;color:#1a1a2e;margin-top:4px">${last.roe}%</div></div>`;
+    h += `<div style="background:#f0fdf4;border-radius:8px;padding:14px;text-align:center"><div style="font-size:11px;color:#8899b0">净利率</div><div style="font-size:22px;font-weight:700;color:#1a1a2e;margin-top:4px">${last.npm}%</div></div>`;
+    h += `<div style="background:#fffbeb;border-radius:8px;padding:14px;text-align:center"><div style="font-size:11px;color:#8899b0">周转率</div><div style="font-size:22px;font-weight:700;color:#1a1a2e;margin-top:4px">${last.at}</div></div>`;
+    h += `<div style="background:#f5f3ff;border-radius:8px;padding:14px;text-align:center"><div style="font-size:11px;color:#8899b0">杠杆</div><div style="font-size:22px;font-weight:700;color:#1a1a2e;margin-top:4px">${last.em}</div></div>`;
+    h += `</div>`;
+    h += `<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-top:12px">`;
+    h += `<div style="background:#f8fafc;border-radius:8px;padding:12px;text-align:center"><div style="font-size:11px;color:#8899b0">净利润</div><div style="font-size:18px;font-weight:600;color:#1a1a2e;margin-top:2px">${lastNp}亿</div></div>`;
+    h += `<div style="background:#f8fafc;border-radius:8px;padding:12px;text-align:center"><div style="font-size:11px;color:#8899b0">营收</div><div style="font-size:18px;font-weight:600;color:#1a1a2e;margin-top:2px">${lastRev}亿</div></div>`;
+    h += `<div style="background:#f8fafc;border-radius:8px;padding:12px;text-align:center"><div style="font-size:11px;color:#8899b0">年均ROE</div><div style="font-size:18px;font-weight:600;color:#1a1a2e;margin-top:2px">${avgRoe.toFixed(1)}%</div></div>`;
+    h += `</div>`;
+    h += `<div style="display:grid;grid-template-columns:repeat(2,1fr);gap:12px;margin-top:12px">`;
+    h += `<div style="background:#f8fafc;border-radius:8px;padding:12px;text-align:center"><div style="font-size:11px;color:#8899b0">利润CAGR(3Y)</div><div style="font-size:16px;font-weight:600;color:#1a1a2e;margin-top:2px">${cagr3 !== null ? cagr3.toFixed(1) + '%' : '—'}</div></div>`;
+    h += `<div style="background:#f8fafc;border-radius:8px;padding:12px;text-align:center"><div style="font-size:11px;color:#8899b0">营收CAGR(3Y)</div><div style="font-size:16px;font-weight:600;color:#1a1a2e;margin-top:2px">${mkVal(calcCagr(yrs.map(y => ({np: y.revenue * 1e8})), 3)) !== '—' ? calcCagr(yrs.map(y => ({np: y.revenue * 1e8})), 3).toFixed(1) + '%' : '—'}</div></div>`;
+    h += `</div>`;
+    h += `</div>`;
+
+    // DuPont history
+    h += `<div style="padding:0 36px 20px">`;
+    h += `<div style="font-size:16px;font-weight:600;color:#1a1a2e;margin-bottom:12px">📅 历年杜邦分解</div>`;
+    h += `<table style="width:100%;border-collapse:collapse;font-size:12px">`;
+    h += `<tr style="background:#f0f4ff"><th style="padding:8px 10px;text-align:left;border-bottom:2px solid #dbe4ff">年份</th><th style="padding:8px 10px;text-align:right;border-bottom:2px solid #dbe4ff">营收(亿)</th><th style="padding:8px 10px;text-align:right;border-bottom:2px solid #dbe4ff">净利(亿)</th><th style="padding:8px 10px;text-align:right;border-bottom:2px solid #dbe4ff">净利率</th><th style="padding:8px 10px;text-align:right;border-bottom:2px solid #dbe4ff">周转率</th><th style="padding:8px 10px;text-align:right;border-bottom:2px solid #dbe4ff">杠杆</th><th style="padding:8px 10px;text-align:right;border-bottom:2px solid #dbe4ff">ROE</th></tr>`;
+    for (const y of yrs) {
+      h += `<tr style="border-bottom:1px solid #edf2f7"><td style="padding:6px 10px;font-weight:500">${y.year}</td><td style="padding:6px 10px;text-align:right">${(y.revenue*1e8).toFixed(1)}</td><td style="padding:6px 10px;text-align:right">${(y.net_profit*1e8).toFixed(1)}</td><td style="padding:6px 10px;text-align:right">${y.npm}%</td><td style="padding:6px 10px;text-align:right">${y.at}</td><td style="padding:6px 10px;text-align:right">${y.em}</td><td style="padding:6px 10px;text-align:right;font-weight:600;color:${y.roe > 15 ? '#10b981' : '#ef4444'}">${y.roe}%</td></tr>`;
+    }
+    h += `</table>`;
+    h += `</div>`;
+
+    // best/worst
+    h += `<div style="padding:0 36px 20px">`;
+    h += `<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">`;
+    h += `<div style="background:#ecfdf5;border:1px solid #a7f3d0;border-radius:10px;padding:16px"><div style="font-size:13px;font-weight:600;color:#047857">🏆 最优年份</div><div style="font-size:28px;font-weight:700;color:#10b981;margin:8px 0">${best.year}年</div><div style="font-size:11px;color:#6b7280">ROE ${best.roe}% ｜ 净利率 ${best.npm}% ｜ 周转 ${best.at} ｜ 杠杆 ${best.em}</div></div>`;
+    h += `<div style="background:#fef2f2;border:1px solid #fecaca;border-radius:10px;padding:16px"><div style="font-size:13px;font-weight:600;color:#b91c1c">⚠️ 最差年份</div><div style="font-size:28px;font-weight:700;color:#ef4444;margin:8px 0">${worst.year}年</div><div style="font-size:11px;color:#6b7280">ROE ${worst.roe}% ｜ 净利率 ${worst.npm}% ｜ 周转 ${worst.at} ｜ 杠杆 ${worst.em}</div></div>`;
+    h += `</div>`;
+    h += `</div>`;
+
+    // charts
+    if (chartRoeUrl) {
+      h += `<div style="padding:0 36px 20px">`;
+      h += `<div style="font-size:16px;font-weight:600;color:#1a1a2e;margin-bottom:12px">📈 趋势图</div>`;
+      h += `<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">`;
+      h += `<div><div style="font-size:12px;color:#6b7280;margin-bottom:4px">ROE趋势</div><img src="${chartRoeUrl}" style="width:100%;border-radius:6px;border:1px solid #edf2f7"></div>`;
+      h += `<div><div style="font-size:12px;color:#6b7280;margin-bottom:4px">净利率趋势</div><img src="${chartNpmUrl}" style="width:100%;border-radius:6px;border:1px solid #edf2f7"></div>`;
+      h += `<div><div style="font-size:12px;color:#6b7280;margin-bottom:4px">周转率趋势</div><img src="${chartAtUrl}" style="width:100%;border-radius:6px;border:1px solid #edf2f7"></div>`;
+      h += `<div><div style="font-size:12px;color:#6b7280;margin-bottom:4px">杠杆趋势</div><img src="${chartEmUrl}" style="width:100%;border-radius:6px;border:1px solid #edf2f7"></div>`;
+      h += `</div></div>`;
+    }
+
+    // model analysis
+    if (m.model) {
+      h += `<div style="padding:0 36px 20px">`;
+      h += `<div style="font-size:16px;font-weight:600;color:#1a1a2e;margin-bottom:8px">🏗️ 商业模式：${modelLabels[m.model] || m.model}</div>`;
+      if (m.desc) h += `<div style="font-size:13px;color:#4a5568;line-height:1.7;margin-bottom:8px">${m.desc}</div>`;
+      if (a.summary) h += `<div style="font-size:13px;color:#4a5568;line-height:1.7">${a.summary}</div>`;
+      h += `</div>`;
+    }
+
+    // cautions
+    const cautions = d.cautions || [];
+    if (cautions.length) {
+      h += `<div style="padding:0 36px 20px">`;
+      h += `<div style="font-size:14px;font-weight:600;color:#9a3412;margin-bottom:8px">🔔 警惕年份</div>`;
+      for (const c of cautions) {
+        h += `<div style="font-size:13px;color:#9a3412;padding:6px 0">▸ ${c.year}年（ROE ${c.roe}%）— ${c.reasons.join('；')}</div>`;
+      }
+      h += `</div>`;
+    }
+
+    // valuation results
+    if (inputVals.length) {
+      h += `<div style="padding:0 36px 20px">`;
+      h += `<div style="font-size:16px;font-weight:600;color:#1a1a2e;margin-bottom:8px">💹 估值计算</div>`;
+      h += `<div style="display:grid;grid-template-columns:repeat(5,1fr);gap:10px">`;
+      for (const x of inputVals) {
+        h += `<div style="background:#f0f4ff;border-radius:8px;padding:12px;text-align:center"><div style="font-size:11px;color:#8899b0">${METRIC_LABEL[x.key]}</div><div style="font-size:18px;font-weight:700;color:#1a1a2e;margin-top:4px">${x.val}</div></div>`;
+      }
+      h += `</div></div>`;
+    }
+
+    h += `<div style="padding:20px 36px;text-align:center;font-size:11px;color:#9ca3af;border-top:1px solid #edf2f7">`;
+    h += `由 杜邦分析 v6.0 生成 ｜ ${new Date().toLocaleDateString('zh-CN')}</div>`;
+
+    return h;
+  }
 }
 
 async function fetchAllMetrics(code, market) {
