@@ -10,7 +10,7 @@ import uvicorn
 
 from analyzer import fetch, detect_market, search_stocks, result_to_dict, CACHE_DIR
 
-app = FastAPI(title="杜邦分析 v7.0")
+app = FastAPI(title="杜邦分析 v7.1")
 executor = ThreadPoolExecutor(max_workers=4)
 
 @app.get("/api/cache-clear")
@@ -140,7 +140,7 @@ HTML = r"""<!DOCTYPE html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>杜邦分析 v7.0</title>
+<title>杜邦分析 v7.1</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
 <script src="https://unpkg.com/lightweight-charts@4.1.1/dist/lightweight-charts.standalone.production.js"></script>
 <style>
@@ -240,13 +240,18 @@ tr:hover td{background:#f8fafc}
 .time-btn.active{background:#4a6cf7;color:#fff;border-color:#4a6cf7}
 .modal-body{flex:1;min-height:0;padding:16px 24px}
 #gmmaChart{width:100%;height:100%}
+.gmma-signals{display:flex;gap:8px;flex-wrap:wrap;padding:8px 24px;border-bottom:1px solid #edf2f7;min-height:32px}
+.gmma-signal{display:inline-flex;align-items:center;gap:4px;padding:3px 10px;border-radius:6px;font-size:12px;font-weight:500;background:#f8fafc;border:1px solid #e2e8f0}
+.gmma-legend{display:flex;gap:16px;align-items:center;margin-left:auto;font-size:11px;color:#8899b0}
+.gmma-legend span{display:inline-flex;align-items:center;gap:3px}
+.gmma-legend .dot{display:inline-block;width:8px;height:8px;border-radius:50%}
 .modal-loading{display:flex;align-items:center;justify-content:center;height:100%;color:#8899b0;font-size:15px}
 </style>
 </head>
 <body>
 
 <div class="header">
-  <h1>杜邦分析 <span style="font-size:11px;color:#8899b0;font-weight:400">v7.0</span></h1>
+  <h1>杜邦分析 <span style="font-size:11px;color:#8899b0;font-weight:400">v7.1</span></h1>
   <p>基于公开财报数据的杜邦分解（支持美股/港股/A股）</p>
 </div>
 
@@ -282,6 +287,7 @@ tr:hover td{background:#f8fafc}
   </div>
   <button class="modal-close" onclick="closeGmmaModal()">×</button>
 </div>
+<div class="gmma-signals" id="gmmaSignals"></div>
     <div class="modal-body">
       <div id="gmmaChart"></div>
     </div>
@@ -1112,7 +1118,7 @@ function _cardHeader(title, subtitle) {
   return `<div style="background:linear-gradient(135deg,#1a1a2e,#16213e);color:#fff;padding:24px 32px"><div style="font-size:20px;font-weight:700">${title}</div>${subtitle ? `<div style="font-size:12px;color:#8899b0;margin-top:4px">${subtitle}</div>` : ''}</div>`;
 }
 function _cardFooter() {
-  return `<div style="padding:16px 32px;text-align:center;font-size:11px;color:#9ca3af;border-top:1px solid #edf2f7">由 杜邦分析 v7.0 生成</div>`;
+  return `<div style="padding:16px 32px;text-align:center;font-size:11px;color:#9ca3af;border-top:1px solid #edf2f7">由 杜邦分析 v7.1 生成</div>`;
 }
 function _downloadCard(wrap, name) {
   _ensureHtml2canvas().then(() => {
@@ -1319,7 +1325,7 @@ function exportFullMd() {
     }
   }
 
-  md += `*由 杜邦分析 v7.0 生成*`;
+  md += `*由 杜邦分析 v7.1 生成*`;
 
   // Download as .md file
   const blob = new Blob([md], {type:'text/markdown;charset=utf-8'});
@@ -1657,6 +1663,11 @@ let gmmaChart = null;
 let _gmmaFullData = null;
 let _gmmaCode = '';
 
+const GMMA_SHORT = [6, 12, 18, 24, 30];
+const GMMA_LONG = [36, 42, 48, 54, 60];
+const GMMA_SHORT_COLORS = ['#9C27B0', '#AB47BC', '#CE93D8', '#E1BEE7', '#F3E5F5'];
+const GMMA_LONG_COLORS = ['#FF9800', '#FFB74D', '#FFCC80', '#FFE0B2', '#FFF3E0'];
+
 function closeGmmaModal() {
   document.getElementById('gmmaModal').classList.remove('active');
   if (gmmaChart) { gmmaChart.remove(); gmmaChart = null; }
@@ -1669,9 +1680,10 @@ function switchGmmaRange(months) {
 
 function openGmma(code) {
   const modal = document.getElementById('gmmaModal');
-  document.getElementById('gmmaModalTitle').textContent = `顾比均线 — ${code.toUpperCase()}`;
+  document.getElementById('gmmaModalTitle').textContent = code.toUpperCase();
   document.querySelectorAll('.time-btn').forEach(b => b.classList.toggle('active', +b.dataset.months === 3));
   document.getElementById('gmmaChart').innerHTML = '<div class="modal-loading">⏳ 加载 K 线数据…</div>';
+  document.getElementById('gmmaSignals').innerHTML = '';
   modal.classList.add('active');
   _gmmaCode = code;
 
@@ -1707,15 +1719,61 @@ function _filterRange(data, months) {
   return data.filter(d => new Date(d.date) >= cutoff);
 }
 
+function _gmmaSignals(data, closes) {
+  const lastClose = closes[closes.length - 1];
+  const signals = [];
+  if (closes.length < 60) return signals;
+
+  const shortEmas = GMMA_SHORT.map(p => calcEma(closes, p).pop());
+  const longEmas = GMMA_LONG.map(p => calcEma(closes, p).pop());
+
+  const aboveShort = shortEmas.every(e => lastClose > e);
+  const belowShort = shortEmas.every(e => lastClose < e);
+  const aboveLong = longEmas.every(e => lastClose > e);
+  const belowLong = longEmas.every(e => lastClose < e);
+
+  if (aboveLong) signals.push({ text: '站稳长期均线组', icon: '📈', color: '#10b981' });
+  else if (belowLong) signals.push({ text: '跌破长期均线组', icon: '📉', color: '#ef4444' });
+
+  if (aboveShort) signals.push({ text: '突破短期均线组', icon: '🚀', color: '#10b981' });
+  else if (belowShort) signals.push({ text: '跌破短期均线组', icon: '💀', color: '#ef4444' });
+
+  const gapEma30 = calcEma(closes, 30);
+  const gapEma36 = calcEma(closes, 36);
+  const gap = gapEma30.map((v, i) => v - gapEma36[i]);
+  const curGap = gap[gap.length - 1];
+  const refIdx = Math.max(0, gap.length - 21);
+  const refGap = gap[refIdx];
+  if (refGap !== 0) {
+    const ratio = curGap / refGap;
+    if (ratio < 0.7) signals.push({ text: '均线组收窄，趋势或将变化', icon: '⚡', color: '#f59e0b' });
+    else if (ratio > 1.3) signals.push({ text: '均线组发散，趋势持续', icon: '📊', color: '#4a6cf7' });
+  }
+
+  return signals;
+}
+
 function _renderGmma(data, code, months) {
   const filtered = _filterRange(data, months);
-
   const container = document.getElementById('gmmaChart');
+  const signalsEl = document.getElementById('gmmaSignals');
   container.innerHTML = '';
+
   if (typeof LightweightCharts === 'undefined') {
     container.innerHTML = '<div class="modal-loading" style="color:#dc2626">❌ 图表库加载失败，请刷新页面重试</div>';
     return;
   }
+
+  // Signals
+  const closes = data.map(d => d.close);
+  const signals = _gmmaSignals(data, closes);
+  signalsEl.innerHTML = signals.map(s =>
+    `<span class="gmma-signal" style="background:${s.color}15;border-color:${s.color}40;color:${s.color}">${s.icon} ${s.text}</span>`
+  ).join('') +
+    `<span class="gmma-legend">
+      <span><span class="dot" style="background:#9C27B0"></span>短组 6/12/18/24/30</span>
+      <span><span class="dot" style="background:#FF9800"></span>长组 36/42/48/54/60</span>
+    </span>`;
 
   if (gmmaChart) gmmaChart.remove();
   gmmaChart = LightweightCharts.createChart(container, {
@@ -1728,62 +1786,54 @@ function _renderGmma(data, code, months) {
     timeScale: { borderColor: '#e0e0e0', timeVisible: true },
   });
 
-  // Candlestick series
+  // Candlestick
   const candleSeries = gmmaChart.addCandlestickSeries({
     upColor: '#ef5350', downColor: '#26a69a', borderUpColor: '#ef5350', borderDownColor: '#26a69a',
     wickUpColor: '#ef5350', wickDownColor: '#26a69a',
     priceFormat: { type: 'price', precision: 2, minMove: 0.01 },
   });
+  candleSeries.setData(filtered.map(d => ({
+    time: d.date.replace(/-/g, '/'), open: d.open, high: d.high, low: d.low, close: d.close,
+  })));
 
-  const chartData = filtered.map(d => ({
-    time: d.date.replace(/-/g, '/'),
-    open: d.open, high: d.high, low: d.low, close: d.close,
-  }));
-  candleSeries.setData(chartData);
-
-  // GMMA: 10 EMAs (calculated on ALL data, only display filtered range)
-  const closes = data.map(d => d.close);
-  const shortPeriods = [6, 12, 18, 24, 30];
-  const longPeriods = [36, 42, 48, 54, 60];
-  const shortColors = ['#2196F3', '#42A5F5', '#64B5F6', '#90CAF9', '#BBDEFB'];
-  const longColors = ['#E53935', '#EF5350', '#E57373', '#EF9A9A', '#FFCDD2'];
-
+  // GMMA lines (calculated on ALL data for continuity, displayed on filtered range)
   const offset = data.length - filtered.length;
 
-  shortPeriods.forEach((p, i) => {
+  GMMA_SHORT.forEach((p, i) => {
     const ema = calcEma(closes, p);
     const lineData = data.slice(offset).map((d, j) => ({
       time: d.date.replace(/-/g, '/'),
       value: Math.round(ema[offset + j] * 100) / 100,
     }));
-    gmmaChart.addLineSeries({ color: shortColors[i], lineWidth: 1, lineStyle: 0, lastValueVisible: false, priceFormat: { type: 'price', precision: 2, minMove: 0.01 } }).setData(lineData);
+    gmmaChart.addLineSeries({
+      color: GMMA_SHORT_COLORS[i], lineWidth: 1, lineStyle: 0,
+      lastValueVisible: true,
+      priceFormat: { type: 'custom', formatter: v => `${p}  ${v.toFixed(1)}` },
+    }).setData(lineData);
   });
 
-  longPeriods.forEach((p, i) => {
+  GMMA_LONG.forEach((p, i) => {
     const ema = calcEma(closes, p);
     const lineData = data.slice(offset).map((d, j) => ({
       time: d.date.replace(/-/g, '/'),
       value: Math.round(ema[offset + j] * 100) / 100,
     }));
-    gmmaChart.addLineSeries({ color: longColors[i], lineWidth: 1, lineStyle: 0, lastValueVisible: false, priceFormat: { type: 'price', precision: 2, minMove: 0.01 } }).setData(lineData);
+    gmmaChart.addLineSeries({
+      color: GMMA_LONG_COLORS[i], lineWidth: 1, lineStyle: 0,
+      lastValueVisible: true,
+      priceFormat: { type: 'custom', formatter: v => `${p}  ${v.toFixed(1)}` },
+    }).setData(lineData);
   });
 
-  // Volume series
+  // Volume
   const volumeSeries = gmmaChart.addHistogramSeries({
-    priceFormat: { type: 'volume' },
-    priceScaleId: 'volume',
-    lastValueVisible: false,
+    priceFormat: { type: 'volume' }, priceScaleId: 'volume', lastValueVisible: false,
   });
-  gmmaChart.priceScale('volume').applyOptions({
-    scaleMargins: { top: 0.8, bottom: 0 },
-  });
-
-  const volumeData = filtered.map(d => ({
-    time: d.date.replace(/-/g, '/'),
-    value: d.volume,
+  gmmaChart.priceScale('volume').applyOptions({ scaleMargins: { top: 0.8, bottom: 0 } });
+  volumeSeries.setData(filtered.map(d => ({
+    time: d.date.replace(/-/g, '/'), value: d.volume,
     color: d.close >= d.open ? 'rgba(38,166,154,0.4)' : 'rgba(239,83,80,0.4)',
-  }));
-  volumeSeries.setData(volumeData);
+  })));
 
   gmmaChart.timeScale().fitContent();
 }
