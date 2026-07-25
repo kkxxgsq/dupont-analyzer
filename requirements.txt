@@ -1,0 +1,5 @@
+akshare>=1.18.0
+fastapi>=0.100.0
+uvicorn>=0.23.0
+pandas>=2.0.0
+numpy>=1.24.0

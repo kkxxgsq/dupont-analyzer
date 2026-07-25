@@ -1,0 +1,17 @@
+version: "3.8"
+
+services:
+  dupont-analyzer:
+    build: .
+    container_name: dupont-analyzer
+    restart: unless-stopped
+    ports:
+      - "8765:8765"
+    environment:
+      - TZ=Asia/Shanghai
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8765/api/dupont?code=JD', timeout=10)"]
+      interval: 60s
+      timeout: 15s
+      retries: 3
+      start_period: 30s

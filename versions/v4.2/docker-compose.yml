@@ -1,0 +1,25 @@
+services:
+  dupont-analyzer:
+    build: .
+    container_name: dupont-analyzer
+    restart: unless-stopped
+    ports:
+      - "8765:8765"
+    volumes:
+      - dupont-cache:/app/cache
+    environment:
+      - TZ=Asia/Shanghai
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8765/', timeout=10)\""]
+      interval: 600s
+      timeout: 15s
+      retries: 3
+      start_period: 60s
+
+volumes:
+  dupont-cache:
