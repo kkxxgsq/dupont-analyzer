@@ -234,6 +234,10 @@ tr:hover td{background:#f8fafc}
 .modal-header h2{font-size:16px;font-weight:600}
 .modal-close{background:none;border:none;font-size:24px;cursor:pointer;color:#8899b0;padding:4px 8px;border-radius:6px}
 .modal-close:hover{background:#f5f7fa;color:#1a1a2e}
+.time-selector{display:flex;gap:6px;align-items:center}
+.time-btn{padding:4px 12px;border:1px solid #d1d9e6;border-radius:6px;font-size:12px;cursor:pointer;background:#fff;color:#5a6a7e;transition:.15s}
+.time-btn:hover{background:#f5f7fa}
+.time-btn.active{background:#4a6cf7;color:#fff;border-color:#4a6cf7}
 .modal-body{flex:1;min-height:0;padding:16px 24px}
 #gmmaChart{width:100%;height:100%}
 .modal-loading{display:flex;align-items:center;justify-content:center;height:100%;color:#8899b0;font-size:15px}
@@ -267,10 +271,17 @@ tr:hover td{background:#f8fafc}
 
 <div class="modal-overlay" id="gmmaModal">
   <div class="modal-content">
-    <div class="modal-header">
-      <h2 id="gmmaModalTitle">顾比均线</h2>
-      <button class="modal-close" onclick="closeGmmaModal()">×</button>
-    </div>
+<div class="modal-header">
+  <h2 id="gmmaModalTitle">顾比均线</h2>
+  <div class="time-selector" id="gmmaTimeSelector">
+    <button class="time-btn active" data-months="3" onclick="switchGmmaRange(3)">近3个月</button>
+    <button class="time-btn" data-months="6" onclick="switchGmmaRange(6)">近6个月</button>
+    <button class="time-btn" data-months="12" onclick="switchGmmaRange(12)">近12个月</button>
+    <button class="time-btn" data-months="36" onclick="switchGmmaRange(36)">近3年</button>
+    <button class="time-btn" data-months="60" onclick="switchGmmaRange(60)">近5年</button>
+  </div>
+  <button class="modal-close" onclick="closeGmmaModal()">×</button>
+</div>
     <div class="modal-body">
       <div id="gmmaChart"></div>
     </div>
@@ -1643,23 +1654,33 @@ function makeLine(id, label, labels, data, color, suffix) {
 
 // ── GMMA (Guppy Multiple Moving Average) ──────────────────────
 let gmmaChart = null;
+let _gmmaFullData = null;
+let _gmmaCode = '';
 
 function closeGmmaModal() {
   document.getElementById('gmmaModal').classList.remove('active');
   if (gmmaChart) { gmmaChart.remove(); gmmaChart = null; }
 }
 
+function switchGmmaRange(months) {
+  document.querySelectorAll('.time-btn').forEach(b => b.classList.toggle('active', +b.dataset.months === months));
+  if (_gmmaFullData) _renderGmma(_gmmaFullData, _gmmaCode, months);
+}
+
 function openGmma(code) {
   const modal = document.getElementById('gmmaModal');
   document.getElementById('gmmaModalTitle').textContent = `顾比均线 — ${code.toUpperCase()}`;
+  document.querySelectorAll('.time-btn').forEach(b => b.classList.toggle('active', +b.dataset.months === 3));
   document.getElementById('gmmaChart').innerHTML = '<div class="modal-loading">⏳ 加载 K 线数据…</div>';
   modal.classList.add('active');
+  _gmmaCode = code;
 
   fetch(`/api/kline?code=${encodeURIComponent(code)}`)
     .then(r => { if (!r.ok) throw new Error('获取失败'); return r.json(); })
     .then(data => {
       if (!data || !data.length) throw new Error('无数据');
-      renderGmma(data, code);
+      _gmmaFullData = data;
+      _renderGmma(data, code, 3);
     })
     .catch(e => {
       document.getElementById('gmmaChart').innerHTML = `<div class="modal-loading" style="color:#dc2626">❌ ${e.message}</div>`;
@@ -1679,7 +1700,16 @@ function calcEma(data, period) {
   return result;
 }
 
-function renderGmma(data, code) {
+function _filterRange(data, months) {
+  if (!data.length) return data;
+  const cutoff = new Date(data[data.length - 1].date);
+  cutoff.setMonth(cutoff.getMonth() - months);
+  return data.filter(d => new Date(d.date) >= cutoff);
+}
+
+function _renderGmma(data, code, months) {
+  const filtered = _filterRange(data, months);
+
   const container = document.getElementById('gmmaChart');
   container.innerHTML = '';
   if (typeof LightweightCharts === 'undefined') {
@@ -1687,6 +1717,7 @@ function renderGmma(data, code) {
     return;
   }
 
+  if (gmmaChart) gmmaChart.remove();
   gmmaChart = LightweightCharts.createChart(container, {
     width: container.clientWidth,
     height: container.clientHeight,
@@ -1695,8 +1726,6 @@ function renderGmma(data, code) {
     crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
     rightPriceScale: { borderColor: '#e0e0e0' },
     timeScale: { borderColor: '#e0e0e0', timeVisible: true },
-    handleScroll: false,
-    handleScale: false,
   });
 
   // Candlestick series
@@ -1706,28 +1735,36 @@ function renderGmma(data, code) {
     priceFormat: { type: 'price', precision: 2, minMove: 0.01 },
   });
 
-  const chartData = data.map(d => ({
+  const chartData = filtered.map(d => ({
     time: d.date.replace(/-/g, '/'),
     open: d.open, high: d.high, low: d.low, close: d.close,
   }));
   candleSeries.setData(chartData);
 
-  // GMMA: 10 EMAs
+  // GMMA: 10 EMAs (calculated on ALL data, only display filtered range)
   const closes = data.map(d => d.close);
   const shortPeriods = [6, 12, 18, 24, 30];
   const longPeriods = [36, 42, 48, 54, 60];
   const shortColors = ['#2196F3', '#42A5F5', '#64B5F6', '#90CAF9', '#BBDEFB'];
   const longColors = ['#E53935', '#EF5350', '#E57373', '#EF9A9A', '#FFCDD2'];
 
+  const offset = data.length - filtered.length;
+
   shortPeriods.forEach((p, i) => {
     const ema = calcEma(closes, p);
-    const lineData = data.map((d, j) => ({ time: d.date.replace(/-/g, '/'), value: Math.round(ema[j] * 100) / 100 }));
+    const lineData = data.slice(offset).map((d, j) => ({
+      time: d.date.replace(/-/g, '/'),
+      value: Math.round(ema[offset + j] * 100) / 100,
+    }));
     gmmaChart.addLineSeries({ color: shortColors[i], lineWidth: 1, lineStyle: 0, lastValueVisible: false, priceFormat: { type: 'price', precision: 2, minMove: 0.01 } }).setData(lineData);
   });
 
   longPeriods.forEach((p, i) => {
     const ema = calcEma(closes, p);
-    const lineData = data.map((d, j) => ({ time: d.date.replace(/-/g, '/'), value: Math.round(ema[j] * 100) / 100 }));
+    const lineData = data.slice(offset).map((d, j) => ({
+      time: d.date.replace(/-/g, '/'),
+      value: Math.round(ema[offset + j] * 100) / 100,
+    }));
     gmmaChart.addLineSeries({ color: longColors[i], lineWidth: 1, lineStyle: 0, lastValueVisible: false, priceFormat: { type: 'price', precision: 2, minMove: 0.01 } }).setData(lineData);
   });
 
@@ -1741,7 +1778,7 @@ function renderGmma(data, code) {
     scaleMargins: { top: 0.8, bottom: 0 },
   });
 
-  const volumeData = data.map(d => ({
+  const volumeData = filtered.map(d => ({
     time: d.date.replace(/-/g, '/'),
     value: d.volume,
     color: d.close >= d.open ? 'rgba(38,166,154,0.4)' : 'rgba(239,83,80,0.4)',
