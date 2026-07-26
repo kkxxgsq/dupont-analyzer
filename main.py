@@ -904,7 +904,15 @@ function _classifyStock(s) {
   const styleIdx = style === '价值' ? 0 : style === '均衡' ? 1 : 2;
   const gridIdx = capIdx * 3 + styleIdx;
 
-  const hedge = HEDGE_MAP[p.industry] || HEDGE_MAP['default'];
+  let hedge = HEDGE_MAP[p.industry] || HEDGE_MAP['default'];
+  // Market-specific instrument names
+  const mktTag = { a:'🇨🇳中国', hk:'🇭🇰香港', us:'🇺🇸美国' }[s.market] || '';
+  if (mktTag) {
+    hedge = {
+      hedge: hedge.hedge.replaceAll('国债期货', mktTag + '国债期货').replaceAll('红利ETF', mktTag + '红利ETF'),
+      reason: hedge.reason.replaceAll('国债', mktTag + '国债'),
+    };
+  }
 
   return { capTier, capReason, style, styleReason, cycleType, cycleReason, gridIdx, mc, growthRate, pe, hedge, industry: p.industry };
 }
