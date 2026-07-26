@@ -1,6 +1,6 @@
 # 杜邦分析 — Dupont Analyzer
 
-[![v7.3](https://img.shields.io/badge/version-v7.3-4a6cf7)](https://github.com/kkxxgsq/dupont-analyzer/releases/tag/v7.3)
+[![v7.4](https://img.shields.io/badge/version-v7.4-4a6cf7)](https://github.com/kkxxgsq/dupont-analyzer/releases/tag/v7.4)
 
 基于公开财报的 **ROE 杜邦分解系统**，支持 **A 股 / 港股 / 美股** 三市场。  
 输入股票代码，自动抓取 5 年财务数据，分解 ROE 驱动因素（净利率 × 周转率 × 杠杆），判断增长质量，辅助基本面分析。
@@ -120,6 +120,7 @@ docker compose up -d
 
 | 版本 | 功能 |
 |------|------|
+| **v7.4** | 对冲建议按市场区分（🇺🇸美国/🇭🇰香港/🇨🇳中国）+ 全做多大类资产配置 |
 | **v7.3** | 对冲建议去除做空，改为全做多配置不同大类资产（国债期货/红利ETF/纳指ETF/黄金ETF） |
 | **v7.2** | 股票性质象限定位（大盘/中盘/小盘 × 价值/均衡/成长）+ 行业对冲建议 |
 | **v7.1** | GMMA 信号分析栏 + 紫色/橙色均线配色 + EMA 期号标签 + VPS 部署包 |
