@@ -10,7 +10,7 @@ import uvicorn
 
 from analyzer import fetch, detect_market, search_stocks, result_to_dict, CACHE_DIR
 
-app = FastAPI(title="杜邦分析 v7.2")
+app = FastAPI(title="杜邦分析 v7.3")
 executor = ThreadPoolExecutor(max_workers=4)
 
 @app.get("/api/cache-clear")
@@ -140,7 +140,7 @@ HTML = r"""<!DOCTYPE html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>杜邦分析 v7.2</title>
+<title>杜邦分析 v7.3</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
 <script src="https://unpkg.com/lightweight-charts@4.1.1/dist/lightweight-charts.standalone.production.js"></script>
 <style>
@@ -255,7 +255,7 @@ tr:hover td{background:#f8fafc}
 <body>
 
 <div class="header">
-  <h1>杜邦分析 <span style="font-size:11px;color:#8899b0;font-weight:400">v7.2</span></h1>
+  <h1>杜邦分析 <span style="font-size:11px;color:#8899b0;font-weight:400">v7.3</span></h1>
   <p>基于公开财报数据的杜邦分解（支持美股/港股/A股）</p>
 </div>
 
@@ -1266,7 +1266,7 @@ function _cardHeader(title, subtitle) {
   return `<div style="background:linear-gradient(135deg,#1a1a2e,#16213e);color:#fff;padding:24px 32px"><div style="font-size:20px;font-weight:700">${title}</div>${subtitle ? `<div style="font-size:12px;color:#8899b0;margin-top:4px">${subtitle}</div>` : ''}</div>`;
 }
 function _cardFooter() {
-  return `<div style="padding:16px 32px;text-align:center;font-size:11px;color:#9ca3af;border-top:1px solid #edf2f7">由 杜邦分析 v7.2 生成</div>`;
+  return `<div style="padding:16px 32px;text-align:center;font-size:11px;color:#9ca3af;border-top:1px solid #edf2f7">由 杜邦分析 v7.3 生成</div>`;
 }
 function _downloadCard(wrap, name) {
   _ensureHtml2canvas().then(() => {
@@ -1481,7 +1481,7 @@ function exportFullMd() {
     }
   }
 
-  md += `*由 杜邦分析 v7.2 生成*`;
+  md += `*由 杜邦分析 v7.3 生成*`;
 
   // Download as .md file
   const blob = new Blob([md], {type:'text/markdown;charset=utf-8'});
