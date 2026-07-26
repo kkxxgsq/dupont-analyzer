@@ -558,7 +558,7 @@ function _buildStockCard(s) {
 
   html += `<div style="clear:both"></div>`;
 
-  html += _renderStockProfile(s);
+  html += `<div id="profile-${s.cardId}">${_renderStockProfile(s)}</div>`;
 
   // Tab bar
   html += `<div class="tab-bar">`;
@@ -866,11 +866,12 @@ function _classifyStock(s) {
 
   // 市值
   let mc = v.mc || 0;
-  let capTier = '未知';
+  let capTier = '—';
   let capReason = '';
   if (mc >= 1000) { capTier = '大盘'; capReason = `市值 ${mc >= 10000 ? (mc/10000).toFixed(1)+'万亿' : mc.toFixed(0)+'亿'} ≥ 1000亿`; }
   else if (mc >= 100) { capTier = '中盘'; capReason = `市值 ${mc.toFixed(0)}亿（100亿~1000亿）`; }
   else if (mc > 0) { capTier = '小盘'; capReason = `市值 ${mc.toFixed(0)}亿 < 100亿`; }
+  else { capReason = '点击「全部获取」后自动判定'; }
 
   // 成长/价值
   const cagr3 = a.cagr_3y;
@@ -878,27 +879,28 @@ function _classifyStock(s) {
   const growthRate = Math.max(cagr3 || 0, cagr5 || 0);
   const pe = v.pe || 0;
 
-  let style = '均衡';
+  let style = '—';
   let styleReason = '';
-  if (pe > 30 && growthRate > 15) { style = '成长'; styleReason = `PE ${pe}x 较高 + CAGR ${growthRate.toFixed(0)}% > 15%`; }
+  if (pe > 30 && growthRate > 15) { style = '成长'; styleReason = `PE ${pe}x + CAGR ${growthRate.toFixed(0)}% > 15% → 高增长`; }
   else if (pe > 25 && growthRate > 10) { style = '成长'; styleReason = `PE ${pe}x > 25 + CAGR ${growthRate.toFixed(0)}% > 10%`; }
   else if (pe < 15 && growthRate < 10) { style = '价值'; styleReason = `PE ${pe}x < 15 + CAGR ${growthRate.toFixed(0)}% < 10%`; }
   else if (pe < 20 && growthRate < 5) { style = '价值'; styleReason = `PE ${pe}x < 20 + CAGR ${growthRate.toFixed(0)}% < 5%`; }
-  else { styleReason = `PE ${pe}x · CAGR ${growthRate.toFixed(0)}% → 均衡`; }
+  else if (pe > 0) { style = '均衡'; styleReason = `PE ${pe}x · CAGR ${growthRate.toFixed(0)}% → 均衡`; }
+  else { styleReason = !s.valuation ? '点击「全部获取」后自动判定' : '数据不足，无法判定（需PE）'; }
 
   // 周期/防御
   const cycleDesc = p.cycle || '';
   let cycleType = '中性';
-  let cycleReason = `行业 ${p.industry}`;
+  let cycleReason = `行业 ${p.industry || '—'}`;
   const defIndustries = ['银行','保险','电信','食品','白酒','医药','医疗器械'];
   const cycIndustries = ['煤炭','石油','券商','船舶制造','建筑','建材','半导体'];
   if (defIndustries.includes(p.industry)) { cycleType = '防御'; cycleReason += ' → 防御型行业'; }
   else if (cycIndustries.includes(p.industry)) { cycleType = '周期'; cycleReason += ' → 强周期行业'; }
   else if (CYCLE_KEYWORDS.some(k => cycleDesc.includes(k))) { cycleType = '周期'; cycleReason += ` · "${cycleDesc}" → 周期`; }
   else if (DEFENSE_KEYWORDS.some(k => cycleDesc.includes(k))) { cycleType = '防御'; cycleReason += ` · "${cycleDesc}" → 防御`; }
-  else { cycleReason += ' → 中性'; }
+  else cycleReason += ' → 中性';
 
-  // grid index: 0=大盘价值 1=大盘均衡 2=大盘成长 3=中盘价值 4=中盘均衡 5=中盘成长 6=小盘价值 7=小盘均衡 8=小盘成长
+  // grid index
   const capIdx = capTier === '大盘' ? 0 : capTier === '中盘' ? 1 : 2;
   const styleIdx = style === '价值' ? 0 : style === '均衡' ? 1 : 2;
   const gridIdx = capIdx * 3 + styleIdx;
@@ -908,11 +910,18 @@ function _classifyStock(s) {
   return { capTier, capReason, style, styleReason, cycleType, cycleReason, gridIdx, mc, growthRate, pe, hedge, industry: p.industry };
 }
 
+function _refreshStockProfile(code) {
+  const s = stocks.find(s => s.code === code);
+  if (!s) return;
+  const el = document.getElementById(`profile-${s.cardId}`);
+  if (el) el.innerHTML = _renderStockProfile(s);
+}
+
 function _renderStockProfile(s) {
   const info = _classifyStock(s);
 
-  const capColors = { '大盘':['#2563eb','#dbeafe'], '中盘':['#0891b2','#cffafe'], '小盘':['#d97706','#fef3c7'] };
-  const styleColors = { '成长':['#db2777','#fdf2f8'], '均衡':['#7c3aed','#f3e8ff'], '价值':['#0284c7','#e0f2fe'] };
+  const capColors = { '大盘':['#2563eb','#dbeafe'], '中盘':['#0891b2','#cffafe'], '小盘':['#d97706','#fef3c7'], '—':['#9ca3af','#f9fafb'] };
+  const styleColors = { '成长':['#db2777','#fdf2f8'], '均衡':['#7c3aed','#f3e8ff'], '价值':['#0284c7','#e0f2fe'], '—':['#9ca3af','#f9fafb'] };
   const cycleColors = { '周期':['#ea580c','#fff7ed'], '防御':['#10b981','#d1fae5'], '中性':['#6b7280','#f3f4f6'] };
 
   const capC = capColors[info.capTier] || ['#6b7280','#f3f4f6'];
@@ -927,17 +936,11 @@ function _renderStockProfile(s) {
     `<span class="profile-cell${v === active ? ' active' : ''}"${v === active ? ` style="background:${colors[1]};color:${colors[0]};border-color:${colors[0]}"` : ''}>${v}</span>`
   ).join('');
 
-  // If valuation not loaded, show placeholder
-  if (!s.valuation && !info.mc) {
-    return `<div style="margin-bottom:18px;padding:16px 20px;background:#fff;border:1px solid #edf2f7;border-radius:10px">
-      <div style="font-weight:600;font-size:14px;color:#1a1a2e;margin-bottom:4px">🧭 股票性质定位</div>
-      <div style="font-size:12px;color:#6b7280">点击「估值参考」后自动判定</div>
-    </div>`;
-  }
+  const noValuation = !s.valuation && info.capTier === '—';
 
   return `
     <div style="margin-bottom:18px;padding:16px 20px;background:#fff;border:1px solid #edf2f7;border-radius:10px">
-      <div style="font-weight:600;font-size:14px;color:#1a1a2e;margin-bottom:8px">🧭 股票性质定位</div>
+      <div style="font-weight:600;font-size:14px;color:#1a1a2e;margin-bottom:8px">🧭 股票性质定位 ${noValuation ? '<span style="font-weight:400;font-size:12px;color:#f59e0b;background:#fffbeb;border-radius:4px;padding:2px 8px">需点击估值参考获取数据</span>' : ''}</div>
       <div class="profile-grid">
         <span style="font-size:12px;font-weight:500;color:#4a5568;width:70px;line-height:32px">市值规模</span>
         ${pill(capOpts, info.capTier, capC)}
@@ -1641,6 +1644,9 @@ async function fetchAllMetrics(code, market) {
     const resp = await fetch(`/api/valuation?code=${encodeURIComponent(code)}&market=${encodeURIComponent(market)}`);
     if (!resp.ok) throw new Error('请求失败');
     const data = await resp.json();
+    // Save to stock object for profile classification
+    const stk = stocks.find(s => s.code === code);
+    if (stk) { stk.valuation = data; _refreshStockProfile(code); }
     for (const [key, apiKey] of Object.entries(METRIC_API_KEY)) {
       const val = data[apiKey];
       const inp = document.getElementById(`pegVal-${code}-${key}`);
@@ -1678,7 +1684,9 @@ async function fetchSingleMetric(ev, code, metricKey, market) {
     const resp = await fetch(`/api/valuation?code=${encodeURIComponent(code)}&market=${encodeURIComponent(market)}`);
     if (!resp.ok) throw new Error('err');
     const data = await resp.json();
-    const val = data[apiKey];
+    // Save to stock object for profile classification
+    const stk = stocks.find(s => s.code === code);
+    if (stk) { stk.valuation = { ...stk.valuation, ...data }; _refreshStockProfile(code); }
     const inp = document.getElementById(`pegVal-${code}-${metricKey}`);
     if (inp && val !== null && val !== undefined) {
       inp.value = val.toFixed(2);
