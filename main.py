@@ -245,9 +245,10 @@ tr:hover td{background:#f8fafc}
 .gmma-legend{display:flex;gap:16px;align-items:center;margin-left:auto;font-size:11px;color:#8899b0}
 .gmma-legend span{display:inline-flex;align-items:center;gap:3px}
 .gmma-legend .dot{display:inline-block;width:8px;height:8px;border-radius:50%}
-.profile-grid{display:grid;grid-template-columns:100px 100px 100px;gap:4px;margin:8px 0}
-.profile-cell{padding:8px 4px;text-align:center;border-radius:6px;font-size:11px;font-weight:600;background:#f0f2f5;color:#8899b0;border:2px solid transparent;transition:.15s}
-.profile-cell.active{border-color:#4a6cf7;background:#eef2ff;color:#4a6cf7;box-shadow:0 0 0 2px rgba(74,108,247,.15)}
+.profile-grid{display:flex;flex-wrap:wrap;gap:6px;margin:10px 0 6px}
+.profile-cell{padding:6px 18px;border-radius:20px;font-size:12px;font-weight:600;background:#f0f2f5;color:#8899b0;border:2px solid transparent;transition:.15s;cursor:default}
+.profile-cell.active{box-shadow:0 2px 8px rgba(0,0,0,.1)}
+.profile-reason{font-size:12px;color:#6b7280;line-height:1.6;margin-bottom:10px}
 .modal-loading{display:flex;align-items:center;justify-content:center;height:100%;color:#8899b0;font-size:15px}
 </style>
 </head>
@@ -865,9 +866,10 @@ function _classifyStock(s) {
   // 市值
   let mc = v.mc || 0;
   let capTier = '未知';
-  if (mc >= 1000) capTier = '大盘';
-  else if (mc >= 100) capTier = '中盘';
-  else if (mc > 0) capTier = '小盘';
+  let capReason = '';
+  if (mc >= 1000) { capTier = '大盘'; capReason = `市值 ${mc >= 10000 ? (mc/10000).toFixed(1)+'万亿' : mc.toFixed(0)+'亿'} ≥ 1000亿`; }
+  else if (mc >= 100) { capTier = '中盘'; capReason = `市值 ${mc.toFixed(0)}亿（100亿~1000亿）`; }
+  else if (mc > 0) { capTier = '小盘'; capReason = `市值 ${mc.toFixed(0)}亿 < 100亿`; }
 
   // 成长/价值
   const cagr3 = a.cagr_3y;
@@ -876,62 +878,81 @@ function _classifyStock(s) {
   const pe = v.pe || 0;
 
   let style = '均衡';
-  if (pe > 30 && growthRate > 15) style = '成长';
-  else if (pe > 25 && growthRate > 10) style = '成长';
-  else if (pe < 15 && growthRate < 10) style = '价值';
-  else if (pe < 20 && growthRate < 5) style = '价值';
+  let styleReason = '';
+  if (pe > 30 && growthRate > 15) { style = '成长'; styleReason = `PE ${pe}x 较高 + CAGR ${growthRate.toFixed(0)}% > 15%`; }
+  else if (pe > 25 && growthRate > 10) { style = '成长'; styleReason = `PE ${pe}x > 25 + CAGR ${growthRate.toFixed(0)}% > 10%`; }
+  else if (pe < 15 && growthRate < 10) { style = '价值'; styleReason = `PE ${pe}x < 15 + CAGR ${growthRate.toFixed(0)}% < 10%`; }
+  else if (pe < 20 && growthRate < 5) { style = '价值'; styleReason = `PE ${pe}x < 20 + CAGR ${growthRate.toFixed(0)}% < 5%`; }
+  else { styleReason = `PE ${pe}x · CAGR ${growthRate.toFixed(0)}% → 均衡`; }
 
   // 周期/防御
   const cycleDesc = p.cycle || '';
   let cycleType = '中性';
-  if (CYCLE_KEYWORDS.some(k => cycleDesc.includes(k))) cycleType = '周期';
-  if (DEFENSE_KEYWORDS.some(k => cycleDesc.includes(k))) cycleType = '防御';
-  // industry-based override
+  let cycleReason = `行业 ${p.industry}`;
   const defIndustries = ['银行','保险','电信','食品','白酒','医药','医疗器械'];
   const cycIndustries = ['煤炭','石油','券商','船舶制造','建筑','建材','半导体'];
-  if (defIndustries.includes(p.industry)) cycleType = '防御';
-  if (cycIndustries.includes(p.industry)) cycleType = '周期';
+  if (defIndustries.includes(p.industry)) { cycleType = '防御'; cycleReason += ' → 防御型行业'; }
+  else if (cycIndustries.includes(p.industry)) { cycleType = '周期'; cycleReason += ' → 强周期行业'; }
+  else if (CYCLE_KEYWORDS.some(k => cycleDesc.includes(k))) { cycleType = '周期'; cycleReason += ` · "${cycleDesc}" → 周期`; }
+  else if (DEFENSE_KEYWORDS.some(k => cycleDesc.includes(k))) { cycleType = '防御'; cycleReason += ` · "${cycleDesc}" → 防御`; }
+  else { cycleReason += ' → 中性'; }
 
   // grid index: 0=大盘价值 1=大盘均衡 2=大盘成长 3=中盘价值 4=中盘均衡 5=中盘成长 6=小盘价值 7=小盘均衡 8=小盘成长
   const capIdx = capTier === '大盘' ? 0 : capTier === '中盘' ? 1 : 2;
   const styleIdx = style === '价值' ? 0 : style === '均衡' ? 1 : 2;
   const gridIdx = capIdx * 3 + styleIdx;
 
-  // 对冲
   const hedge = HEDGE_MAP[p.industry] || HEDGE_MAP['default'];
 
-  return { capTier, style, cycleType, gridIdx, mc, growthRate, pe, hedge, industry: p.industry };
+  return { capTier, capReason, style, styleReason, cycleType, cycleReason, gridIdx, mc, growthRate, pe, hedge, industry: p.industry };
 }
 
 function _renderStockProfile(s) {
   const info = _classifyStock(s);
-  const labels = ['大盘价值','大盘均衡','大盘成长','中盘价值','中盘均衡','中盘成长','小盘价值','小盘均衡','小盘成长'];
-  const styleColor = info.style === '成长' ? '#db2777' : info.style === '价值' ? '#0284c7' : '#7c3aed';
-  const cycleColor = info.cycleType === '周期' ? '#ea580c' : info.cycleType === '防御' ? '#10b981' : '#6b7280';
 
-  let gridHtml = '<div class="profile-grid">';
-  for (let i = 0; i < 9; i++) {
-    const active = i === info.gridIdx ? ' active' : '';
-    gridHtml += `<div class="profile-cell${active}">${labels[i]}</div>`;
+  const capColors = { '大盘':['#2563eb','#dbeafe'], '中盘':['#0891b2','#cffafe'], '小盘':['#d97706','#fef3c7'] };
+  const styleColors = { '成长':['#db2777','#fdf2f8'], '均衡':['#7c3aed','#f3e8ff'], '价值':['#0284c7','#e0f2fe'] };
+  const cycleColors = { '周期':['#ea580c','#fff7ed'], '防御':['#10b981','#d1fae5'], '中性':['#6b7280','#f3f4f6'] };
+
+  const capC = capColors[info.capTier] || ['#6b7280','#f3f4f6'];
+  const styC = styleColors[info.style] || ['#6b7280','#f3f4f6'];
+  const cycC = cycleColors[info.cycleType] || ['#6b7280','#f3f4f6'];
+
+  const capOpts = ['大盘','中盘','小盘'];
+  const styOpts = ['价值','均衡','成长'];
+  const cycOpts = ['周期','防御','中性'];
+
+  const pill = (list, active, colors) => list.map(v =>
+    `<span class="profile-cell${v === active ? ' active' : ''}"${v === active ? ` style="background:${colors[1]};color:${colors[0]};border-color:${colors[0]}"` : ''}>${v}</span>`
+  ).join('');
+
+  // If valuation not loaded, show placeholder
+  if (!s.valuation && !info.mc) {
+    return `<div style="margin-bottom:18px;padding:16px 20px;background:#fff;border:1px solid #edf2f7;border-radius:10px">
+      <div style="font-weight:600;font-size:14px;color:#1a1a2e;margin-bottom:4px">🧭 股票性质定位</div>
+      <div style="font-size:12px;color:#6b7280">点击「估值参考」后自动判定</div>
+    </div>`;
   }
-  gridHtml += '</div>';
-
-  let basis = [];
-  if (info.mc > 0) basis.push(`市值 ${info.mc >= 10000 ? (info.mc/10000).toFixed(1)+'万亿' : info.mc.toFixed(0)+'亿'} → ${info.capTier}`);
-  if (info.pe > 0) basis.push(`PE ${info.pe}x`);
-  if (info.growthRate > 0) basis.push(`CAGR ${info.growthRate.toFixed(0)}% → ${info.style}`);
-  basis.push(`行业 ${info.industry} → ${info.cycleType}`);
 
   return `
     <div style="margin-bottom:18px;padding:16px 20px;background:#fff;border:1px solid #edf2f7;border-radius:10px">
-      <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
-        <span style="font-weight:600;font-size:14px;color:#1a1a2e">🧭 股票性质定位</span>
-        <span style="display:inline-flex;align-items:center;gap:4px;background:${styleColor}15;color:${styleColor};border:1px solid ${styleColor}30;border-radius:6px;padding:2px 10px;font-size:12px;font-weight:600">${info.capTier} ${info.style}</span>
-        <span style="display:inline-flex;align-items:center;gap:4px;background:${cycleColor}15;color:${cycleColor};border:1px solid ${cycleColor}30;border-radius:6px;padding:2px 10px;font-size:12px;font-weight:600">${info.cycleType}</span>
+      <div style="font-weight:600;font-size:14px;color:#1a1a2e;margin-bottom:8px">🧭 股票性质定位</div>
+      <div class="profile-grid">
+        <span style="font-size:12px;font-weight:500;color:#4a5568;width:70px;line-height:32px">市值规模</span>
+        ${pill(capOpts, info.capTier, capC)}
       </div>
-      ${gridHtml}
-      <div style="font-size:12px;color:#6b7280;line-height:1.7;margin:8px 0">📐 ${basis.join(' | ')}</div>
-      <div style="padding:10px 14px;background:#f0f4ff;border-radius:8px;border-left:3px solid #4a6cf7">
+      <div class="profile-reason">→ ${info.capReason}</div>
+      <div class="profile-grid">
+        <span style="font-size:12px;font-weight:500;color:#4a5568;width:70px;line-height:32px">风格类型</span>
+        ${pill(styOpts, info.style, styC)}
+      </div>
+      <div class="profile-reason">→ ${info.styleReason}</div>
+      <div class="profile-grid">
+        <span style="font-size:12px;font-weight:500;color:#4a5568;width:70px;line-height:32px">周期属性</span>
+        ${pill(cycOpts, info.cycleType, cycC)}
+      </div>
+      <div class="profile-reason">→ ${info.cycleReason}</div>
+      <div style="padding:10px 14px;background:#f0f4ff;border-radius:8px;border-left:3px solid #4a6cf7;margin-top:4px">
         <div style="font-size:13px;font-weight:600;color:#1a1a2e;margin-bottom:4px">🛡️ 对冲建议</div>
         <div style="font-size:13px;color:#4a5568"><strong>推荐对冲：</strong>${info.hedge.hedge}</div>
         <div style="font-size:12px;color:#6b7280;margin-top:2px">${info.hedge.reason}</div>
