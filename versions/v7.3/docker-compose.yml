@@ -1,0 +1,14 @@
+version: "3.9"
+
+services:
+  dupont:
+    build: .
+    container_name: dupont-analyzer
+    ports:
+      - "8765:8765"
+    volumes:
+      - dupont-cache:/app/cache
+    restart: unless-stopped
+
+volumes:
+  dupont-cache:
