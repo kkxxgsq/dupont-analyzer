@@ -188,6 +188,16 @@ tr:hover td{background:#f8fafc}
 /* charts */
 .chart-grid{display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-top:16px}
 @media(max-width:900px){.chart-grid{grid-template-columns:1fr}}
+@media(max-width:640px){
+.val-grid{grid-template-columns:1fr!important}
+.val-ref{grid-template-columns:1fr 1fr!important}
+.card{padding:12px!important}
+.card-body{padding:12px!important}
+.container{padding:12px!important}
+.header{padding:12px!important}
+.header h1{font-size:18px!important}
+.search-bar{flex-wrap:wrap!important}
+}
 .chart-box{padding:12px;min-height:260px}
 .chart-box canvas{width:100%!important;height:260px!important}
 /* multi stock compare */
@@ -1095,7 +1105,7 @@ function loadPeg(code, market) {
           <span style="background:#f0f4ff;color:#4a6cf7;border-radius:6px;padding:3px 10px;font-size:11px;font-weight:500">本地计算</span>
           <span style="margin-left:auto"></span>
         </div>
-        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:10px;margin-bottom:10px">
+        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:10px;margin-bottom:10px" class="val-ref">
           <div style="background:#fff;border-radius:8px;padding:10px 14px;text-align:center"><div style="font-size:11px;color:#8899b0">最新净利润</div><div style="font-size:17px;font-weight:700;color:#1a1a2e;margin-top:4px">${npVal}亿</div></div>
           <div style="background:#fff;border-radius:8px;padding:10px 14px;text-align:center"><div style="font-size:11px;color:#8899b0">利润 CAGR(3Y)</div><div style="font-size:17px;font-weight:700;color:#1a1a2e;margin-top:4px">${cagr3!==null?cagr3.toFixed(1)+'%':'—'}</div></div>
           <div style="background:#fff;border-radius:8px;padding:10px 14px;text-align:center"><div style="font-size:11px;color:#8899b0">利润 CAGR(5Y)</div><div style="font-size:17px;font-weight:700;color:#1a1a2e;margin-top:4px">${cagr5!==null?cagr5.toFixed(1)+'%':'—'}</div></div>
@@ -1120,7 +1130,7 @@ function loadPeg(code, market) {
           <button onclick="fetchAllMetrics('${code}','${s.market}')" style="background:#4a6cf7;color:#fff;border:none;border-radius:6px;padding:6px 14px;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap">💹 全部获取</button>
           <span style="font-size:11px;color:#8899b0;margin-left:8px">一次获取5个估值指标</span>
         </div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:10px">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:10px" class="val-grid">
           ${sorted.map((m, i) => metricCard(m, i)).join('')}
         </div>
         <div id="pegSummary-${code}" style="margin-top:12px"></div>
