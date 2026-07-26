@@ -1,6 +1,6 @@
 # 杜邦分析 — Dupont Analyzer
 
-[![v7.2](https://img.shields.io/badge/version-v7.2-4a6cf7)](https://github.com/kkxxgsq/dupont-analyzer/releases/tag/v7.2)
+[![v7.3](https://img.shields.io/badge/version-v7.3-4a6cf7)](https://github.com/kkxxgsq/dupont-analyzer/releases/tag/v7.3)
 
 基于公开财报的 **ROE 杜邦分解系统**，支持 **A 股 / 港股 / 美股** 三市场。  
 输入股票代码，自动抓取 5 年财务数据，分解 ROE 驱动因素（净利率 × 周转率 × 杠杆），判断增长质量，辅助基本面分析。
