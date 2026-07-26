@@ -558,6 +558,8 @@ function _buildStockCard(s) {
 
   html += `<div style="clear:both"></div>`;
 
+  html += _renderStockProfile(s);
+
   // Tab bar
   html += `<div class="tab-bar">`;
   html += `<div class="tab-item active" data-tab="dupont-${s.cardId}" onclick="switchTab2(this,'dupont-${s.cardId}')">杜邦分解</div>`;
@@ -570,7 +572,6 @@ function _buildStockCard(s) {
   // Tab content: dupont
   html += `<div class="tab-content active" data-content="dupont-${s.cardId}"><div class="card-body">`;
   html += renderProfile(d.profile);
-  html += _renderStockProfile(s);
   const markings = {best: by ? by.year : null, worst: wy ? wy.year : null};
   const cautionYears = (d.cautions || []).map(c => c.year);
   html += `<div style="display:flex;gap:12px;font-size:12px;color:#4a5568;margin-bottom:8px">
