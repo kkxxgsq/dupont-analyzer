@@ -482,6 +482,8 @@ function _appendStockCard(s) {
   wrap.appendChild(div);
   div.style.display = '';
   _syncCompareTabs();
+  // Auto-fetch valuation for profile classification
+  setTimeout(() => fetchAllMetrics(s.code, s.market), 50);
 }
 
 function _syncCompareTabs() {
@@ -1646,7 +1648,7 @@ async function fetchAllMetrics(code, market) {
     const data = await resp.json();
     // Save to stock object for profile classification
     const stk = stocks.find(s => s.code === code);
-    if (stk) { stk.valuation = data; _refreshStockProfile(code); }
+    if (stk) { stk.valuation = { ...data, mc: data.market_cap }; _refreshStockProfile(code); }
     for (const [key, apiKey] of Object.entries(METRIC_API_KEY)) {
       const val = data[apiKey];
       const inp = document.getElementById(`pegVal-${code}-${key}`);
@@ -1686,7 +1688,8 @@ async function fetchSingleMetric(ev, code, metricKey, market) {
     const data = await resp.json();
     // Save to stock object for profile classification
     const stk = stocks.find(s => s.code === code);
-    if (stk) { stk.valuation = { ...stk.valuation, ...data }; _refreshStockProfile(code); }
+    if (stk) { stk.valuation = { ...stk.valuation, ...data, mc: data.market_cap }; _refreshStockProfile(code); }
+    const val = data[apiKey];
     const inp = document.getElementById(`pegVal-${code}-${metricKey}`);
     if (inp && val !== null && val !== undefined) {
       inp.value = val.toFixed(2);
